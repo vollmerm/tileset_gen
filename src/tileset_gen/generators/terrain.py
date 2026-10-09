@@ -185,7 +185,7 @@ def cobble(ctx: GenContext, p: CobbleParams, variant: int, phase: float) -> np.n
 
 
 class BrickParams(Params):
-    rows: int = Field(4, ge=2, le=8, description="brick courses per tile")
+    rows: Literal[2, 4, 8] = Field(4, description="brick courses per tile (divides the tile size)")
     wear: float = Field(0.3, ge=0.0, le=1.0, description="chipped / darker bricks")
 
 
@@ -219,7 +219,7 @@ def brick_floor(ctx: GenContext, p: BrickParams, variant: int, phase: float) -> 
 
 
 class WoodParams(Params):
-    planks: int = Field(4, ge=2, le=8, description="planks per tile")
+    planks: Literal[2, 4, 8] = Field(4, description="planks per tile (divides the tile size)")
     grain: float = Field(0.5, ge=0.0, le=1.0)
 
 
@@ -319,7 +319,7 @@ def lava(ctx: GenContext, p: LavaParams, variant: int, phase: float) -> np.ndarr
 
 class FloorParams(Params):
     style: Literal["tiles", "checker"] = Field("tiles", description="square tiles or a two-tone checker")
-    size: int = Field(2, ge=1, le=4, description="floor tiles per tile edge")
+    size: Literal[1, 2, 4] = Field(2, description="floor tiles per tile edge (divides the tile size)")
 
 
 @register(

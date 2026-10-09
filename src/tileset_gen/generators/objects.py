@@ -185,7 +185,7 @@ def rock(ctx: GenContext, p: RockParams, w: int, h: int) -> np.ndarray:
         for _ in range(int(R)):
             if mask[y, x]:
                 c[y, x] = r[0]
-            x += rng.choice([-1, 0, 1])
+            x = int(np.clip(x + rng.choice([-1, 0, 1]), 0, W - 1))
             y += 1
             if y >= H:
                 break

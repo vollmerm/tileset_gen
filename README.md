@@ -53,7 +53,7 @@ See `examples/specs/` for complete specs. The outline:
 ## How it works
 
 - **Index-space rendering.** Generators draw palette indices, not RGB. Each base color expands into a 5-step ramp whose shadows shift toward blue and highlights toward yellow. Before export, the palette is merged down to `max_colors`.
-- **Seamless terrain.** Noise is periodic on the tile size. Variants share one base field and differ only in interior details, so any variant sits next to any other without a seam.
+- **Seamless terrain.** The base noise repeats exactly every tile. Each variant adds its own noise, faded to zero at the tile border, plus interior detail patches. Any two variants meet without a seam but look different inside, which breaks up the per-tile repeat.
 - **Autotiles.** Each transition produces the 16 corner-Wang combinations. The boundary is a bilinear blend of the four corner values plus tile-periodic noise, so neighboring tiles agree along shared edges. Edge styles add outlines, foam or cliff faces.
 - **Animations.** Animatable terrains (water, lava) are re-rendered with a looping time phase, and frame 0 is the static tile. Transitions that touch an animated terrain get animated too.
 - **Planner.** `planner.py` calls `claude-haiku-5-5` with structured outputs. The system prompt's generator catalog comes from the registry, so the prompt and code stay in sync. If the planned spec fails validation, the errors go back to the model once for a fix.
@@ -72,12 +72,17 @@ Use `ctx.ramp(slot)` for colors and `ctx.rng(...)` for randomness.
 
 ```sh
 uv run pytest
-uv run ruff check src tests && uv run ruff format src tests
+uv run ruff check src tests scripts && uv run ruff format src tests scripts
 ```
+
+`tests/test_generators.py` renders every generator at each param's extremes, across seeds and both tile sizes. If a new generator crashes on some valid spec, that test should catch it.
+
+### Planner eval
+
+`scripts/eval_planner.py` runs the planner over a set of themes (or `--themes FILE`, one per line). It reports first-try and final validity, render crashes, latency, token usage and chosen densities, and saves each spec under `out/eval/`. `--build` also renders each one. One run of the 8 default themes costs a few cents with Haiku. Re-run it after changing the planner prompt or the generator catalog.
 
 ## Known limitations (v1)
 
 - Autotiles are 16-tile corner sets. There's no 47-tile blob set, and no multi-terrain Wang set (each pair is its own set in Tiled).
-- A single terrain variant repeats every tile. Low-contrast base fields hide most of it, but lava and water still show some repetition.
-- Detail sprites (tufts, pebbles) are fixed-size, so they look sparse at 32px.
-- The preview map only uses the longest chain of connected transitions; terrains off that chain don't appear in it.
+- Terrain variants share their border pixels and differ only inside, so a terrain with one variant still repeats every tile. Use 2–3 variants for natural ground.
+- In the preview map, the longest transition chain sets the elevation bands. Side branches appear as patches inside their host terrain, and terrains with no transitions appear as hard-edged rectangles.

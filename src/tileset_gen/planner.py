@@ -9,6 +9,7 @@ against the generator registry. Validation errors are fed back once for a fix.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Literal
 
 import anthropic
@@ -24,6 +25,15 @@ MAX_TOKENS = 16000
 
 class PlannerError(RuntimeError):
     pass
+
+
+@dataclass
+class PlanStats:
+    """Filled in by `plan()` when passed: one entry of validation errors per attempt, plus token usage."""
+
+    attempts: list[list[str]] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class ParamKV(BaseModel):
@@ -78,7 +88,11 @@ class WireSpec(BaseModel):
 
     def to_spec(self, seed: int, tile_size: int, max_colors: int) -> TilesetSpec:
         def params(kvs: list[ParamKV]) -> dict:
-            return {kv.name: kv.value for kv in kvs}
+            # The wire schema only has `number`; turn 3.0 back into 3 so int/Literal params validate.
+            return {
+                kv.name: int(kv.value) if isinstance(kv.value, float) and kv.value.is_integer() else kv.value
+                for kv in kvs
+            }
 
         return TilesetSpec(
             name=self.name,
@@ -109,18 +123,26 @@ except for snow).
 - Favor classic, readable JRPG staples for the theme: 3-5 terrains, 5-10 objects, 1-3 animations.
 
 # Spec rules
+- palette: every `hex` is exactly 7 characters, "#" plus 6 hex digits (e.g. "#5aa83c").
 - terrains: each needs a unique name, a terrain generator, colors (palette names or #rrggbb, in the \
-generator's color-slot order; omitted slots use defaults), variants 1-4, and params.
-- transitions: blend `upper` over `lower` with corner autotiles. Order terrains like elevation \
-(e.g. water -> sand -> grass -> dirt) and connect consecutive pairs; use at most one transition per pair. \
+generator's color-slot order; omitted slots use defaults), variants, and params. Use 2-3 variants for \
+natural ground (grass, dirt, sand, snow, cobble) and 1 for water, lava and regular floors.
+- transitions: blend `upper` over `lower` with corner autotiles; at most one transition per terrain pair. \
+Connect every terrain: transitions should form a chain ordered like elevation \
+(e.g. water -> sand -> grass -> dirt), optionally with side branches (grass -> flower_meadow). \
+A terrain with no transition can only appear as hard-edged rectangles, so only leave one unconnected \
+when that is intended (a carpet, a plaza). \
 edge_style: "shore" for land over water, "cliff" for raised ground (mesas, plateaus, floors over lava pits), \
 "soft" otherwise. roughness 0-1 (0.3-0.6 typical).
 - objects: object generator, size in tiles (width/height 1-4; trees 1x1 or 2x2, houses 2x2 or 3x3, \
-pine 1x2), place_on lists terrain names it may stand on (never water/lava), density 0-1 for the preview map.
+pine 1x2), place_on lists terrain names it may stand on (never water/lava). \
+density (0-1) controls how often it appears in the preview map: 0.5-0.8 for common scenery \
+(trees, bushes, rocks, flowers), 0.3-0.5 for props (barrels, fences, signs), 0.2-0.4 for landmarks \
+(houses, chests). Values below 0.1 make the object nearly invisible.
 - animations: either set `terrain` to an animatable terrain's name (generator null) to animate that terrain, \
 or set `generator` to an animation generator (terrain null). frames 2-8, frame_ms 80-400.
-- params: list of {{name, value}} using only the params listed for that generator, within their ranges. \
-Use an empty list to accept the defaults.
+- params: list of {{name, value}} using only the params listed for that generator, within their ranges \
+(for a|b|c params use one of the listed values). Use an empty list to accept the defaults.
 - Names are lowercase snake_case and unique across terrains, objects and animations.
 
 # Generators
@@ -149,8 +171,10 @@ def plan(
     max_colors: int = 48,
     client: anthropic.Anthropic | None = None,
     retries: int = 1,
+    stats: PlanStats | None = None,
 ) -> TilesetSpec:
     client = client or anthropic.Anthropic()
+    stats = stats if stats is not None else PlanStats()
     messages: list[dict] = [{"role": "user", "content": f"Plan a tileset for this theme: {prompt}"}]
     errors: list[str] = []
     for attempt in range(retries + 1):
@@ -162,6 +186,10 @@ def plan(
             output_format=WireSpec,
             output_config={"effort": "low"},
         )
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            stats.input_tokens += usage.input_tokens
+            stats.output_tokens += usage.output_tokens
         if response.stop_reason == "refusal":
             raise PlannerError("the model declined to plan this tileset")
         if response.stop_reason == "max_tokens":
@@ -172,6 +200,7 @@ def plan(
             errors = validate_spec(spec)
         except ValidationError as e:
             errors = [f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()]
+        stats.attempts.append(errors)
         if not errors:
             return spec
         if attempt < retries:
