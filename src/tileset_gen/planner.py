@@ -156,7 +156,7 @@ when that is intended (a carpet, a plaza). \
 edge_style: "shore" for land over water, "cliff" for raised ground (mesas, plateaus, floors over lava pits), \
 "soft" otherwise. roughness 0-1 (0.3-0.6 typical).
 - objects: object generator, size in tiles (width/height 1-4; trees 1x1 or 2x2, houses 2x2 or 3x3, \
-pine 1x2), place_on lists terrain names it may stand on (never water/lava). \
+pine 1x2, wells 1x2 or 2x2), place_on lists terrain names it may stand on (never water/lava). \
 density (0-1) controls how often it appears in the preview map: 0.5-0.8 for common scenery \
 (trees, bushes, rocks, flowers), 0.3-0.5 for props (barrels, fences, signs), 0.2-0.4 for landmarks \
 (houses, chests). Values below 0.1 make the object nearly invisible.

@@ -261,3 +261,21 @@ def test_wall_without_top_tiles_vertically():
     capped = wall(ctx, WallParams(top=True), 2, 2) == mortar
     assert np.array_equal(capped[:, :16], capped[:, 16:]), "the cap must still tile horizontally"
     assert not np.array_equal(capped[:16], capped[16:])
+
+
+def test_preview_shadows_survive_palette_reduction(tmp_path: Path):
+    """Shadowed ground uses darker shades that may appear nowhere in the atlas itself."""
+    spec = TilesetSpec.model_validate(
+        {
+            "name": "wells",
+            "seed": 3,
+            "palette": [{"name": "grass", "hex": "#5aa83c"}],
+            "terrains": [{"name": "grass", "generator": "grass", "colors": ["grass"], "variants": 2, "decor": 0}],
+            "objects": [
+                {"name": "well", "generator": "well", "width": 2, "height": 2, "place_on": ["grass"], "density": 1.0}
+            ],
+        }
+    )
+    build(spec, tmp_path, map_size=(8, 6), preview_scale=1)
+    preview = np.asarray(Image.open(tmp_path / "preview.png").convert("RGBA"))
+    assert (preview[..., 3] == 255).all()

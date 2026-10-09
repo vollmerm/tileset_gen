@@ -14,7 +14,7 @@ from .context import GenContext
 from .generators.autotile import MIXED_CORNERS, compose, corner_mask
 from .generators.terrain import decorate
 from .noise import Noise
-from .palette import Palette
+from .palette import SHADOW, Palette
 from .spec import TilesetSpec
 from .validate import merged_colors, validate_spec
 
@@ -43,6 +43,12 @@ class BuildResult:
         """Merge colors down to spec.max_colors and build the RGBA lookup table."""
         sheet = self.atlas.sheet()
         counts = np.bincount(sheet.ravel(), minlength=len(self.palette.colors))
+        if counts[SHADOW]:
+            # The preview darkens ground under shadows to colors the atlas itself may never use;
+            # keep them in the palette (or merged into a neighbor) instead of dropping them.
+            darker = self.palette.shadow_lut()
+            used = np.nonzero(counts)[0]
+            np.add.at(counts, darker[used[used > SHADOW]], 1)
         self.remap = self.palette.reduce(counts, self.spec.max_colors)
         self.lut = self.palette.rgba_lut(self.remap)
 

@@ -688,3 +688,83 @@ def house(ctx: GenContext, p: HouseParams, w: int, h: int) -> np.ndarray:
         (ys >= base + 1) & (ys <= base + 2) & (xs >= wx0 + 2) & (xs <= wx1 + 3)
     )
     return drop_shadow(c, cast)
+
+
+class WellParams(Params):
+    roof: bool = Field(True, description="a small shingled roof on posts, with a rope and bucket (needs height 2)")
+    water: bool = Field(True, description="water inside; off for a dry well")
+
+
+@register(
+    "well",
+    "object",
+    WellParams,
+    colors=[("stone", "#8a8494"), ("wood", "#8a5a34"), ("water", "#3a78c8")],
+    doc="Round stone well seen from above and in front. 1x1 is a bare well; 1x2 or 2x2 adds a roof.",
+)
+def well(ctx: GenContext, p: WellParams, w: int, h: int) -> np.ndarray:
+    T = ctx.T
+    c = _canvas(ctx, w, h)
+    H, W = c.shape
+    sr, wr, ar = ctx.ramp(0), ctx.ramp(1), ctx.ramp(2)
+    ys, xs = grid(H, W)
+    cx = W / 2
+    rx = min(W / 2 - 2, T * 0.42 * max(1, w * 0.8))
+    ry = max(2.0, rx * 0.45)
+    base = H - 3
+    body_h = max(4, int(T * 0.3))
+    yc = base - ry - body_h  # center of the rim ellipse
+    dx = (xs - cx) / rx
+    curve = ry * np.sqrt(np.clip(1 - dx**2, 0, 1))
+    # Front of the cylinder: staggered stone courses, lit on the left.
+    body = (np.abs(dx) <= 1) & (ys >= yc) & (ys <= base - ry + curve)
+    course = max(3, T // 5)
+    row = ((ys - yc - curve) // course).astype(int)
+    blk = max(3, T // 4)
+    joint_x = ((xs + (row % 2) * (blk // 2)) % blk) < 1
+    lit = cylinder_levels(xs, cx - rx, cx + rx, sr[1:5])
+    c[body] = lit[body]
+    c[body & ((ys - yc - curve) % course < 1)] = sr[0]
+    c[body & joint_x] = sr[1]
+    # The rim from above, and the opening: the far inner wall in shadow, then water.
+    rim = dx**2 + ((ys - yc) / ry) ** 2 <= 1
+    hole = ((xs - cx) / (rx - 2)) ** 2 + ((ys - yc) / (ry - 1)) ** 2 <= 1
+    c[rim] = sr[3]
+    c[rim & (ys < yc - ry * 0.5)] = sr[4]
+    c[rim & ~hole & (ys > yc + ry * 0.4)] = sr[2]
+    c[hole] = sr[0]
+    if p.water:
+        pool = hole & (ys >= yc - 0.2)
+        c[pool] = ar[1]
+        c[pool & (np.abs(xs - (cx - rx * 0.3)) < 1) & (ys < yc + 1)] = ar[3]  # glint
+    else:
+        c[hole & (ys >= yc)] = sr[1]
+    if p.roof and h >= 2:
+        roof_bottom = int(yc - ry - max(4, T * 0.45))
+        post_top = roof_bottom
+        for px in (int(cx - rx), int(cx + rx) - 1):
+            rect(c, px, post_top, px + 1, int(yc + ry * 0.3), wr[2])
+            rect(c, px + 1, post_top, px + 1, int(yc + ry * 0.3), wr[1])
+        bar = post_top + 2
+        rect(c, int(cx - rx) + 2, bar, int(cx + rx) - 2, bar, wr[3])
+        rect(c, int(cx - rx) + 2, bar + 1, int(cx + rx) - 2, bar + 1, wr[1])
+        # Rope and bucket hanging over the opening.
+        bx = int(cx)
+        rect(c, bx, bar + 2, bx, int(yc - 2), wr[4])
+        rect(c, bx - 1, int(yc - 2), bx + 1, int(yc - 1), wr[2])
+        put(c, bx - 1, int(yc - 2), wr[3])
+        # Roof seen from above and in front: a shingled plane with a ridge and a dark eave.
+        roof_top = 1
+        x0, x1 = 1, W - 2
+        shingles = _shingles(H, W, T, wr)
+        plane = (ys >= roof_top) & (ys < roof_bottom + 1) & (xs >= x0) & (xs < x1 + 1)
+        c[plane] = shingles[plane]
+        c[plane & (ys < roof_top + 1)] = wr[4]
+        c[plane & (ys >= roof_bottom)] = wr[0]
+        c[plane & (xs >= x1)] = wr[1]
+        c[plane & (xs < x0 + 1)] = wr[3]
+        # The roof shades the posts and bar just below it.
+        under = (ys >= roof_bottom + 1) & (ys < roof_bottom + 2) & (c > 0)
+        c[under] = np.where(c[under] >= wr[2], wr[1], c[under])
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, cx + 1.5, base + 0.5, rx + 1, max(1.5, ry * 0.7))
