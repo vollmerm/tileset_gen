@@ -1,0 +1,40 @@
+[project]
+name = "tileset-gen"
+version = "0.1.0"
+description = "Procedural JRPG-style pixel-art tileset generator with an LLM planner"
+readme = "README.md"
+authors = [
+    { name = "Michael Vollmer", email = "michael.vollmer90@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.13.0",
+    "numpy>=2.5.3",
+    "pillow>=12.3.0",
+    "pydantic>=2",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+tileset-gen = "tileset_gen:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["UP007", "UP045", "B008", "B023", "B905"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

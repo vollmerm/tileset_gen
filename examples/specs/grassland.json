@@ -1,0 +1,46 @@
+{
+  "name": "grassland",
+  "theme": "Sunny overworld meadow with a lake, dirt roads and a small village",
+  "seed": 7,
+  "tile_size": 16,
+  "max_colors": 48,
+  "palette": [
+    {"name": "grass", "hex": "#5aa83c"},
+    {"name": "soil", "hex": "#a0703f"},
+    {"name": "sand", "hex": "#e2c47e"},
+    {"name": "water", "hex": "#3a78c8"},
+    {"name": "foliage", "hex": "#3f8f3a"},
+    {"name": "bark", "hex": "#7a5230"},
+    {"name": "stone", "hex": "#8b8794"},
+    {"name": "roof", "hex": "#b8483a"},
+    {"name": "plaster", "hex": "#e6d6b0"},
+    {"name": "gold", "hex": "#e0b640"},
+    {"name": "petal", "hex": "#e85a8a"}
+  ],
+  "terrains": [
+    {"name": "water", "generator": "water", "colors": ["water"], "variants": 1, "params": {"depth": 0.4}},
+    {"name": "sand", "generator": "sand", "colors": ["sand"], "variants": 2},
+    {"name": "grass", "generator": "grass", "colors": ["grass", "gold"], "variants": 3, "params": {"density": 0.5, "flowers": 0.15}},
+    {"name": "dirt", "generator": "dirt", "colors": ["soil"], "variants": 2}
+  ],
+  "transitions": [
+    {"lower": "water", "upper": "sand", "edge_style": "shore"},
+    {"lower": "sand", "upper": "grass", "edge_style": "soft"},
+    {"lower": "grass", "upper": "dirt", "edge_style": "soft", "roughness": 0.6}
+  ],
+  "objects": [
+    {"name": "oak", "generator": "tree", "colors": ["foliage", "bark"], "width": 1, "height": 1, "place_on": ["grass"], "density": 0.6},
+    {"name": "big_oak", "generator": "tree", "colors": ["foliage", "bark", "petal"], "width": 2, "height": 2, "params": {"fruit": 0.4}, "place_on": ["grass"], "density": 0.4},
+    {"name": "boulder", "generator": "rock", "colors": ["stone", "foliage"], "params": {"moss": 0.4}, "place_on": ["grass", "dirt"], "density": 0.2},
+    {"name": "bush", "generator": "bush", "colors": ["foliage", "petal"], "params": {"berries": 0.5}, "place_on": ["grass"], "density": 0.3},
+    {"name": "flowers", "generator": "flowers", "colors": ["petal"], "place_on": ["grass"], "density": 0.3},
+    {"name": "cottage", "generator": "house", "colors": ["roof", "plaster", "bark"], "width": 3, "height": 3, "place_on": ["grass", "dirt"], "density": 0.5},
+    {"name": "chest", "generator": "chest", "colors": ["bark", "gold"], "place_on": ["dirt"], "density": 0.1},
+    {"name": "signpost", "generator": "sign", "colors": ["bark"], "place_on": ["dirt"], "density": 0.1},
+    {"name": "fence", "generator": "fence", "place_on": ["grass"], "density": 0.1}
+  ],
+  "animations": [
+    {"name": "water_waves", "terrain": "water", "frames": 4, "frame_ms": 250},
+    {"name": "torch", "generator": "torch", "frames": 4, "frame_ms": 120}
+  ]
+}

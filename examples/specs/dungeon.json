@@ -1,0 +1,39 @@
+{
+  "name": "dungeon",
+  "theme": "Torch-lit underground dungeon with lava pits and an ancient crystal",
+  "seed": 3,
+  "tile_size": 16,
+  "max_colors": 40,
+  "palette": [
+    {"name": "flagstone", "hex": "#7a7488"},
+    {"name": "mortar", "hex": "#3a3444"},
+    {"name": "brick", "hex": "#6a5a6e"},
+    {"name": "lava", "hex": "#e8601c"},
+    {"name": "wall", "hex": "#5e5870"},
+    {"name": "wood", "hex": "#7a5030"},
+    {"name": "gold", "hex": "#e8c040"},
+    {"name": "crystal", "hex": "#7ad8e8"}
+  ],
+  "terrains": [
+    {"name": "lava", "generator": "lava", "colors": ["lava"], "variants": 1, "params": {"crust": 0.4}},
+    {"name": "floor", "generator": "cobble", "colors": ["flagstone", "mortar"], "variants": 3, "params": {"stones": 3, "cracks": 0.4}},
+    {"name": "bricks", "generator": "brick_floor", "colors": ["brick", "mortar"], "variants": 2, "params": {"rows": 4}}
+  ],
+  "transitions": [
+    {"lower": "lava", "upper": "floor", "edge_style": "cliff", "roughness": 0.5},
+    {"lower": "floor", "upper": "bricks", "edge_style": "soft", "roughness": 0.2}
+  ],
+  "objects": [
+    {"name": "wall", "generator": "wall", "colors": ["wall"], "width": 2, "height": 2, "params": {"style": "stone"}, "place_on": ["bricks"], "density": 0.3},
+    {"name": "door", "generator": "door", "colors": ["wood", "wall"], "width": 1, "height": 2, "place_on": ["bricks"], "density": 0.2},
+    {"name": "chest", "generator": "chest", "colors": ["wood", "gold"], "place_on": ["floor"], "density": 0.15},
+    {"name": "open_chest", "generator": "chest", "colors": ["wood", "gold"], "params": {"open": true}, "place_on": ["floor"], "density": 0.1},
+    {"name": "barrel", "generator": "barrel", "colors": ["wood"], "place_on": ["floor", "bricks"], "density": 0.2},
+    {"name": "rubble", "generator": "rock", "colors": ["flagstone"], "params": {"lumps": 4}, "place_on": ["floor"], "density": 0.3}
+  ],
+  "animations": [
+    {"name": "lava_flow", "terrain": "lava", "frames": 4, "frame_ms": 220},
+    {"name": "torch", "generator": "torch", "frames": 4, "frame_ms": 120},
+    {"name": "save_crystal", "generator": "crystal", "colors": ["crystal"], "frames": 6, "frame_ms": 150}
+  ]
+}

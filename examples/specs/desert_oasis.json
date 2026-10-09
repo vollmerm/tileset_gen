@@ -1,0 +1,38 @@
+{
+  "name": "desert_oasis",
+  "theme": "Sun-baked desert with mesas, an oasis pool and a ruined outpost",
+  "seed": 21,
+  "tile_size": 16,
+  "max_colors": 40,
+  "palette": [
+    {"name": "sand", "hex": "#e8c482"},
+    {"name": "mesa", "hex": "#c07848"},
+    {"name": "oasis", "hex": "#2fa0b8"},
+    {"name": "palm", "hex": "#4a9a48"},
+    {"name": "trunk", "hex": "#8a6038"},
+    {"name": "sandstone", "hex": "#d0a070"},
+    {"name": "cloth", "hex": "#c84a3a"},
+    {"name": "gold", "hex": "#f0c040"}
+  ],
+  "terrains": [
+    {"name": "oasis", "generator": "water", "colors": ["oasis"], "variants": 1, "params": {"depth": 0.2, "waves": 0.7}},
+    {"name": "sand", "generator": "sand", "colors": ["sand"], "variants": 3, "params": {"ripples": 0.8}},
+    {"name": "mesa", "generator": "dirt", "colors": ["mesa"], "variants": 2, "params": {"pebbles": 0.6}}
+  ],
+  "transitions": [
+    {"lower": "oasis", "upper": "sand", "edge_style": "shore", "roughness": 0.4},
+    {"lower": "sand", "upper": "mesa", "edge_style": "cliff", "roughness": 0.3}
+  ],
+  "objects": [
+    {"name": "palm", "generator": "tree", "colors": ["palm", "trunk"], "width": 1, "height": 2, "params": {"canopy": 0.9, "clumps": 6}, "place_on": ["sand"], "density": 0.4},
+    {"name": "rock", "generator": "rock", "colors": ["sandstone"], "place_on": ["sand", "mesa"], "density": 0.4},
+    {"name": "boulder", "generator": "rock", "colors": ["mesa"], "width": 2, "height": 2, "params": {"lumps": 4}, "place_on": ["mesa"], "density": 0.5},
+    {"name": "shrub", "generator": "bush", "colors": ["#8a9a48"], "place_on": ["sand"], "density": 0.3},
+    {"name": "outpost", "generator": "house", "colors": ["cloth", "sandstone", "trunk"], "width": 3, "height": 3, "params": {"walls": "stone", "chimney": false}, "place_on": ["sand"], "density": 0.6},
+    {"name": "barrel", "generator": "barrel", "colors": ["trunk"], "place_on": ["sand"], "density": 0.2},
+    {"name": "chest", "generator": "chest", "colors": ["trunk", "gold"], "place_on": ["mesa"], "density": 0.1}
+  ],
+  "animations": [
+    {"name": "oasis_ripple", "terrain": "oasis", "frames": 4, "frame_ms": 300}
+  ]
+}
