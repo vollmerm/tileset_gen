@@ -86,6 +86,23 @@ class WireSpec(BaseModel):
     objects: list[WireObject]
     animations: list[WireAnimation]
 
+    @classmethod
+    def from_spec(cls, spec: TilesetSpec) -> WireSpec:
+        def kvs(params: dict) -> list[dict]:
+            return [{"name": k, "value": v} for k, v in params.items()]
+
+        return cls.model_validate(
+            {
+                "name": spec.name,
+                "theme": spec.theme,
+                "palette": [c.model_dump() for c in spec.palette],
+                "terrains": [{**t.model_dump(), "params": kvs(t.params)} for t in spec.terrains],
+                "transitions": [t.model_dump() for t in spec.transitions],
+                "objects": [{**o.model_dump(), "params": kvs(o.params)} for o in spec.objects],
+                "animations": [{**a.model_dump(), "params": kvs(a.params)} for a in spec.animations],
+            }
+        )
+
     def to_spec(self, seed: int, tile_size: int, max_colors: int) -> TilesetSpec:
         def params(kvs: list[ParamKV]) -> dict:
             # The wire schema only has `number`; turn 3.0 back into 3 so int/Literal params validate.
@@ -163,19 +180,19 @@ def _assistant_content(response) -> list[dict]:
     return blocks
 
 
-def plan(
-    prompt: str,
+def _run_planner(
+    messages: list[dict],
     *,
-    seed: int = 0,
-    tile_size: int = 16,
-    max_colors: int = 48,
-    client: anthropic.Anthropic | None = None,
-    retries: int = 1,
-    stats: PlanStats | None = None,
+    seed: int,
+    tile_size: int,
+    max_colors: int,
+    client: anthropic.Anthropic | None,
+    retries: int,
+    stats: PlanStats | None,
 ) -> TilesetSpec:
+    """Call the model, validate, and feed errors back up to `retries` times."""
     client = client or anthropic.Anthropic()
     stats = stats if stats is not None else PlanStats()
-    messages: list[dict] = [{"role": "user", "content": f"Plan a tileset for this theme: {prompt}"}]
     errors: list[str] = []
     for attempt in range(retries + 1):
         response = client.messages.parse(
@@ -214,3 +231,82 @@ def plan(
                 }
             )
     raise PlannerError("planner produced an invalid spec:\n" + "\n".join(f"- {e}" for e in errors))
+
+
+def plan(
+    prompt: str,
+    *,
+    seed: int = 0,
+    tile_size: int = 16,
+    max_colors: int = 48,
+    client: anthropic.Anthropic | None = None,
+    retries: int = 1,
+    stats: PlanStats | None = None,
+) -> TilesetSpec:
+    """Plan a new spec from a theme."""
+    messages: list[dict] = [{"role": "user", "content": f"Plan a tileset for this theme: {prompt}"}]
+    return _run_planner(
+        messages, seed=seed, tile_size=tile_size, max_colors=max_colors, client=client, retries=retries, stats=stats
+    )
+
+
+REFINE_TEMPLATE = """\
+Here is the current tileset spec:
+
+{spec}
+
+Apply this change: {instruction}
+
+Keep everything the change doesn't touch exactly as it is: same names, colors, generators and params. \
+Return the full updated spec."""
+
+
+def refine(
+    spec: TilesetSpec,
+    instruction: str,
+    *,
+    client: anthropic.Anthropic | None = None,
+    retries: int = 1,
+    stats: PlanStats | None = None,
+) -> TilesetSpec:
+    """Edit an existing spec according to a natural-language instruction.
+
+    Seed, tile size and color limit are carried over; the model never sees them.
+    """
+    wire = WireSpec.from_spec(spec).model_dump_json(indent=1)
+    messages: list[dict] = [{"role": "user", "content": REFINE_TEMPLATE.format(spec=wire, instruction=instruction)}]
+    return _run_planner(
+        messages,
+        seed=spec.seed,
+        tile_size=spec.tile_size,
+        max_colors=spec.max_colors,
+        client=client,
+        retries=retries,
+        stats=stats,
+    )
+
+
+def spec_diff(old: TilesetSpec, new: TilesetSpec) -> list[str]:
+    """Human-readable summary of what changed between two specs, by element name."""
+    lines: list[str] = []
+    if old.theme != new.theme:
+        lines.append(f"~ theme: {new.theme!r}")
+    sections = [
+        ("palette", lambda s: {c.name: c for c in s.palette}),
+        ("terrain", lambda s: {t.name: t for t in s.terrains}),
+        ("transition", lambda s: {f"{t.lower}->{t.upper}": t for t in s.transitions}),
+        ("object", lambda s: {o.name: o for o in s.objects}),
+        ("animation", lambda s: {a.name: a for a in s.animations}),
+    ]
+    for label, index in sections:
+        a, b = index(old), index(new)
+        for name in b.keys() - a.keys():
+            lines.append(f"+ {label} {name}")
+        for name in a.keys() - b.keys():
+            lines.append(f"- {label} {name}")
+        for name in a.keys() & b.keys():
+            if a[name] != b[name]:
+                before, after = a[name].model_dump(), b[name].model_dump()
+                changed = ", ".join(f"{k}: {before[k]!r} -> {after[k]!r}" for k in after if before.get(k) != after[k])
+                lines.append(f"~ {label} {name}: {changed}")
+    return sorted(lines, key=lambda line: (line[2:].split()[0], line))

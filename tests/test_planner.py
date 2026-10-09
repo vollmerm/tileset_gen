@@ -116,3 +116,22 @@ def test_system_prompt_lists_generators():
     prompt = system_prompt()
     for name in ("grass", "water", "tree", "house", "torch"):
         assert f"- {name}" in prompt
+
+
+def test_refine_round_trips_and_keeps_build_settings():
+    from tileset_gen.planner import refine, spec_diff
+    from tileset_gen.spec import TilesetSpec
+
+    old = plan("meadow", seed=5, tile_size=32, client=fake_client(GOOD))
+    changed = {**GOOD, "objects": GOOD["objects"] + [{**GOOD["objects"][0], "name": "birch", "density": 0.7}]}
+    changed["terrains"] = [GOOD["terrains"][0], {**GOOD["terrains"][1], "params": [{"name": "density", "value": 0.9}]}]
+    client = fake_client(changed)
+    new = refine(old, "add birches and lusher grass", client=client)
+    assert (new.seed, new.tile_size, new.max_colors) == (5, 32, old.max_colors)
+    sent = client.messages.calls[0]["messages"][0]["content"]
+    assert "add birches" in sent and '"name": "oak"' in sent and '"seed"' not in sent
+    diff = spec_diff(old, new)
+    assert "+ object birch" in diff
+    assert any(line.startswith("~ terrain grass") and "0.9" in line for line in diff)
+    assert spec_diff(old, old) == []
+    assert isinstance(new, TilesetSpec)

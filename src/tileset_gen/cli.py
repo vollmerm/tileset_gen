@@ -101,6 +101,45 @@ def generate_cmd(
     _do_build(spec, output or Path("out") / spec.name, map_size, preview_scale)
 
 
+@app.command("refine")
+def refine_cmd(
+    spec_path: Annotated[Path, typer.Argument(help="Spec JSON file to edit.", exists=True, dir_okay=False)],
+    instruction: Annotated[str, typer.Argument(help='Change to make, e.g. "add a graveyard".')],
+    output: Annotated[
+        Optional[Path], typer.Option("-o", "--output", help="Write here instead of updating SPEC in place.")
+    ] = None,
+    build_dir: Annotated[Optional[Path], typer.Option("--build", help="Also render to this directory.")] = None,
+    map_size: MapOpt = "24x16",
+    preview_scale: ScaleOpt = 3,
+) -> None:
+    """Edit an existing spec with the LLM planner and show what changed.
+
+    Updating in place keeps the previous version as SPEC.bak.
+    """
+    import anthropic
+
+    from .planner import PlannerError, refine, spec_diff
+
+    old = TilesetSpec.load(spec_path)
+    typer.echo("Refining with Claude Haiku...", err=True)
+    try:
+        new = refine(old, instruction)
+    except (PlannerError, anthropic.APIError) as e:
+        typer.echo(f"planner failed: {e}", err=True)
+        raise typer.Exit(1) from e
+    for line in spec_diff(old, new) or ["(no changes)"]:
+        typer.echo(line)
+    target = output or spec_path
+    if target == spec_path:
+        backup = spec_path.with_suffix(spec_path.suffix + ".bak")
+        backup.write_text(spec_path.read_text())
+        typer.echo(f"previous version saved to {backup}")
+    new.save(target)
+    typer.echo(f"wrote {target}")
+    if build_dir:
+        _do_build(new, build_dir, map_size, preview_scale)
+
+
 @app.command("validate")
 def validate_cmd(spec_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)]) -> None:
     """Check a spec against the generator registry."""

@@ -15,6 +15,9 @@ uv run tileset-gen build examples/specs/grassland.json -o out/grassland
 # With the planner (needs ANTHROPIC_API_KEY or `ant auth login`)
 uv run tileset-gen generate "snowy mountain village" -o out/snow
 uv run tileset-gen plan "haunted swamp" -o swamp.json   # spec only; edit it, then `build`
+
+# Edit an existing spec in plain language; prints a diff, keeps swamp.json.bak
+uv run tileset-gen refine swamp.json "add a graveyard and make the water murkier" --build out/swamp
 ```
 
 Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists every generator, its color slots and params). Build options: `--seed`, `--map-size 24x16`, `--preview-scale 3`. Plan options: `--seed`, `--tile-size 16|32`.
