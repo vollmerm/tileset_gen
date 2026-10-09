@@ -15,9 +15,9 @@
     {"name": "crystal", "hex": "#7ad8e8"}
   ],
   "terrains": [
-    {"name": "lava", "generator": "lava", "colors": ["lava"], "variants": 1, "params": {"crust": 0.4}},
-    {"name": "floor", "generator": "cobble", "colors": ["flagstone", "mortar"], "variants": 3, "params": {"stones": 3, "cracks": 0.4}},
-    {"name": "bricks", "generator": "brick_floor", "colors": ["brick", "mortar"], "variants": 2, "params": {"rows": 4}}
+    {"name": "lava", "generator": "lava", "colors": ["lava"], "variants": 2, "decor": 2, "params": {"crust": 0.4}},
+    {"name": "floor", "generator": "cobble", "colors": ["flagstone", "mortar"], "variants": 3, "decor": 3, "params": {"stones": 3, "cracks": 0.4}},
+    {"name": "bricks", "generator": "brick_floor", "colors": ["brick", "mortar"], "variants": 2, "decor": 2, "params": {"rows": 4}}
   ],
   "transitions": [
     {"lower": "lava", "upper": "floor", "edge_style": "cliff", "roughness": 0.5},

@@ -90,7 +90,10 @@ def write_tsx(res: BuildResult, out: Path) -> None:
     for m in atlas.sorted_meta():
         if m.kind == "frame" and not m.animation:
             continue
-        tile = ET.SubElement(root, "tile", {"id": str(m.id), "type": m.kind})
+        attrs = {"id": str(m.id), "type": m.kind}
+        if "probability" in m.props:
+            attrs["probability"] = str(m.props["probability"])  # Tiled's terrain brush picks decor tiles rarely
+        tile = ET.SubElement(root, "tile", attrs)
         props = ET.SubElement(tile, "properties")
         ET.SubElement(props, "property", {"name": "name", "value": m.name})
         ET.SubElement(props, "property", {"name": "group", "value": m.group})

@@ -18,10 +18,10 @@
     {"name": "petal", "hex": "#e85a8a"}
   ],
   "terrains": [
-    {"name": "water", "generator": "water", "colors": ["water"], "variants": 1, "params": {"depth": 0.4}},
-    {"name": "sand", "generator": "sand", "colors": ["sand"], "variants": 2},
-    {"name": "grass", "generator": "grass", "colors": ["grass", "gold"], "variants": 3, "params": {"density": 0.5, "flowers": 0.15}},
-    {"name": "dirt", "generator": "dirt", "colors": ["soil"], "variants": 2}
+    {"name": "water", "generator": "water", "colors": ["water"], "variants": 2, "decor": 2, "params": {"depth": 0.4}},
+    {"name": "sand", "generator": "sand", "colors": ["sand"], "variants": 3, "decor": 3},
+    {"name": "grass", "generator": "grass", "colors": ["grass", "gold"], "variants": 3, "decor": 4, "params": {"density": 0.5, "flowers": 0.15}},
+    {"name": "dirt", "generator": "dirt", "colors": ["soil"], "variants": 3, "decor": 3}
   ],
   "transitions": [
     {"lower": "water", "upper": "sand", "edge_style": "shore"},

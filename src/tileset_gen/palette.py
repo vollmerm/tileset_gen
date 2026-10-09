@@ -1,6 +1,8 @@
 """Color ramps and the indexed palette shared by every generator.
 
-Index 0 is always fully transparent. Every other index is an opaque RGB color.
+Index 0 is always fully transparent and index 1 (`SHADOW`) is a translucent
+drop shadow that darkens whatever is underneath. Every other index is an
+opaque RGB color.
 Ramps run darkest -> lightest; shadows drift toward blue/purple and highlights
 toward warm yellow, the classic hue-shifted shading of 16-bit sprite work.
 """
@@ -15,6 +17,9 @@ import numpy as np
 HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
 
 RGB = tuple[int, int, int]
+
+SHADOW = 1  # reserved index: translucent cast shadow under objects
+SHADOW_RGBA = (28, 20, 48, 104)
 
 SHADOW_HUE = 0.68  # blue-violet
 HIGHLIGHT_HUE = 0.14  # warm yellow
@@ -65,7 +70,7 @@ class Palette:
 
     def __init__(self, named: dict[str, str] | None = None):
         self.named: dict[str, RGB] = {k.lower(): hex_to_rgb(v) for k, v in (named or {}).items()}
-        self.colors: list[RGB] = [(0, 0, 0)]
+        self.colors: list[RGB] = [(0, 0, 0), SHADOW_RGBA[:3]]
         self._index: dict[RGB, int] = {}
         self._ramps: dict[tuple[RGB, int], list[int]] = {}
         self._outline: dict[int, int] = {}
@@ -104,14 +109,26 @@ class Palette:
         """Darkest color of the ramp `idx` belongs to (used for selective outlines)."""
         return self._outline.get(idx, idx)
 
+    def shadow_lut(self, steps: int = 2) -> np.ndarray:
+        """Index -> `steps` darker along its ramp: roughly what the translucent `SHADOW` does, in index space."""
+        lut = np.arange(len(self.colors))
+        for idxs in self._ramps.values():
+            for i, idx in enumerate(idxs):
+                if lut[idx] == idx:
+                    lut[idx] = idxs[max(0, i - steps)]
+        return lut
+
     def reduce(self, counts: np.ndarray, max_colors: int) -> np.ndarray:
         """Merge the closest rarely-used colors until at most `max_colors` opaque remain.
 
-        Returns a remap table: new_index = remap[old_index]. Index 0 stays 0.
+        Returns a remap table: new_index = remap[old_index]. Index 0 stays 0. A used
+        `SHADOW` is never merged but counts against the budget.
         """
         n = len(self.colors)
         remap = np.arange(n)
-        alive = [i for i in range(1, n) if counts[i] > 0]
+        if counts[SHADOW] > 0:
+            max_colors -= 1
+        alive = [i for i in range(2, n) if counts[i] > 0]
         weight = {i: int(counts[i]) for i in alive}
         cols = np.array(self.colors, dtype=float)
         lum = np.array([0.30, 0.59, 0.11])
@@ -149,12 +166,10 @@ class Palette:
     def rgba_lut(self, remap: np.ndarray | None = None) -> np.ndarray:
         """(N, 4) uint8 lookup table; with a remap, rows are the compacted palette."""
         if remap is None:
-            lut = np.array([(*c, 255) for c in self.colors], dtype=np.uint8)
-        else:
-            size = int(remap.max()) + 1
-            lut = np.zeros((size, 4), dtype=np.uint8)
-            for old, new in enumerate(remap):
-                if new:
-                    lut[new] = (*self.colors[old], 255)
+            remap = np.arange(len(self.colors))
+        lut = np.zeros((int(remap.max()) + 1, 4), dtype=np.uint8)
+        for old, new in enumerate(remap):
+            if new:
+                lut[new] = SHADOW_RGBA if old == SHADOW else (*self.colors[old], 255)
         lut[0] = (0, 0, 0, 0)
         return lut

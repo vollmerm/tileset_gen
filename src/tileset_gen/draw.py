@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .noise import quantize
-from .palette import Palette
+from .palette import SHADOW, Palette
 
 LIGHT = np.array([-0.55, -0.7, 0.55])
 LIGHT = LIGHT / np.linalg.norm(LIGHT)
@@ -93,9 +93,26 @@ def put(canvas: np.ndarray, x: int, y: int, color: int) -> None:
         canvas[y, x] = color
 
 
-def cylinder_levels(x: np.ndarray, x0: float, x1: float, levels: list[int]) -> np.ndarray:
-    """Horizontal cylinder shading: lit slightly left of center, dark at the right edge."""
-    t = (x - x0) / max(x1 - x0, 1e-6)
+def cylinder_levels(x: np.ndarray, x0, x1, levels: list[int]) -> np.ndarray:
+    """Horizontal cylinder shading: lit slightly left of center, dark at the right edge.
+
+    `x0`/`x1` may be arrays (broadcast against `x`) for shapes whose width varies.
+    """
+    t = (x - x0) / np.maximum(np.asarray(x1) - x0, 1e-6)
     light = np.clip(1.0 - np.abs(t - 0.35) * 1.6, 0.0, 1.0)
     k = np.clip((light * len(levels)).astype(int), 0, len(levels) - 1)
     return np.asarray(levels, dtype=np.uint8)[k]
+
+
+def drop_shadow(canvas: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Cast `SHADOW` onto the transparent pixels of `mask`. Call after `outline`."""
+    out = canvas.copy()
+    out[mask & (canvas == 0)] = SHADOW
+    return out
+
+
+def ground_shadow(canvas: np.ndarray, cx: float, cy: float, rx: float, ry: float) -> np.ndarray:
+    """An elliptical contact shadow on the ground, nudged right/down away from the top-left light."""
+    ys, xs = grid(*canvas.shape)
+    inside = ((xs - cx) / rx) ** 2 + ((ys - cy) / ry) ** 2 <= 1.0
+    return drop_shadow(canvas, inside)

@@ -29,6 +29,7 @@ class GeneratorInfo:
     colors: tuple[tuple[str, str], ...]  # (slot name, default hex)
     doc: str
     animatable: bool = False
+    decor: tuple[Callable, ...] = ()  # terrain only: features drawn onto rare detail tiles
 
     def default_colors(self) -> list[str]:
         return [hexv for _, hexv in self.colors]
@@ -37,9 +38,17 @@ class GeneratorInfo:
 REGISTRY: dict[str, GeneratorInfo] = {}
 
 
-def register(name: str, kind: Kind, params: type[Params] = Params, colors=(), doc: str = "", animatable: bool = False):
+def register(
+    name: str,
+    kind: Kind,
+    params: type[Params] = Params,
+    colors=(),
+    doc: str = "",
+    animatable: bool = False,
+    decor=(),
+):
     def deco(fn):
-        REGISTRY[name] = GeneratorInfo(name, kind, fn, params, tuple(colors), doc, animatable)
+        REGISTRY[name] = GeneratorInfo(name, kind, fn, params, tuple(colors), doc, animatable, tuple(decor))
         return fn
 
     return deco
@@ -90,6 +99,8 @@ def describe_for_prompt() -> str:
             lines.append(f"- {g.name}{flag}: {g.doc}")
             if g.colors:
                 lines.append("  colors: " + ", ".join(f"{slot} (default {hexv})" for slot, hexv in g.colors))
+            if g.decor:
+                lines.append("  decor: " + ", ".join(f.__name__.lstrip("_") for f in g.decor))
             for fname, field in g.params.model_fields.items():
                 lines.append("  param " + _describe_field(fname, field))
         lines.append("")

@@ -3,6 +3,11 @@
 Signature: fn(ctx, params, width, height) -> uint8[H, W]. Multi-tile objects
 are drawn whole and sliced into tiles by the builder. Shapes keep a 1px margin
 so the selective outline fits inside the canvas.
+
+Objects use the 3/4 top-down view of 16-bit JRPGs: you see the front of a thing
+and its top (chest lids, barrel heads, wall caps, roofs), light comes from the
+upper left, and everything standing on the ground casts a translucent `SHADOW`
+down and to the right. Shadows are added after the outline so they never get one.
 """
 
 from __future__ import annotations
@@ -13,9 +18,23 @@ import numpy as np
 from pydantic import Field
 
 from ..context import GenContext
-from ..draw import cylinder_levels, ellipse_height, grid, outline, put, rect, shade, shift
+from ..draw import (
+    cylinder_levels,
+    drop_shadow,
+    ellipse_height,
+    grid,
+    ground_shadow,
+    outline,
+    put,
+    rect,
+    shade,
+    shift,
+)
 from ..noise import Noise
 from ..registry import Params, register
+
+STONE = "#8a8494"
+GLASS = "#6ec3e8"
 
 
 def _canvas(ctx: GenContext, w: int, h: int) -> np.ndarray:
@@ -23,12 +42,24 @@ def _canvas(ctx: GenContext, w: int, h: int) -> np.ndarray:
 
 
 def _trunk(c: np.ndarray, cx: float, top: int, bottom: int, width: int, ramp: list[int]) -> None:
+    """A shaded trunk with roots flaring out at the base."""
     x0 = int(round(cx - width / 2))
     x1 = x0 + width - 1
     xs = np.arange(x0, x1 + 1)
     c[top : bottom + 1, x0 : x1 + 1] = cylinder_levels(xs + 0.5, x0, x1 + 1, ramp[1:4])[None, :]
-    put(c, x0 - 1, bottom, ramp[1])
-    put(c, x1 + 1, bottom, ramp[2])
+    put(c, x0 - 1, bottom, ramp[2])
+    put(c, x1 + 1, bottom, ramp[1])
+    put(c, x1 + 1, bottom - 1, ramp[1])
+
+
+def _top_faces(mask: np.ndarray, depth: int) -> np.ndarray:
+    """The upper `depth` pixels of each column of a mask: the part of a solid seen from above."""
+    top = np.zeros_like(mask)
+    run = mask & ~shift(mask, 1, 0, False)
+    for _ in range(depth):
+        top |= run
+        run = shift(run, 1, 0, False) & mask
+    return top
 
 
 class TreeParams(Params):
@@ -49,7 +80,8 @@ def tree(ctx: GenContext, p: TreeParams, w: int, h: int) -> np.ndarray:
     H, W = c.shape
     fr, tr = ctx.ramp(0), ctx.ramp(1)
     rng = ctx.rng("shape")
-    _trunk(c, W / 2, int(H * 0.5), H - 2, max(2, W // 6), tr)
+    base = H - 3
+    _trunk(c, W / 2, int(H * 0.5), base, max(2, W // 6), tr)
     R = min(W * 0.42, H * 0.36) * p.canopy
     cx, cy = W / 2, R * 1.05 + 1
     blobs = [(cx, cy, R * 0.95, R * 0.85)]
@@ -65,10 +97,15 @@ def tree(ctx: GenContext, p: TreeParams, w: int, h: int) -> np.ndarray:
     mask[:1] = mask[-1:] = False
     mask[:, :1] = mask[:, -1:] = False
     canopy = shade(height, mask, fr[1:5], dither=0.7, ambient=0.2)
+    # Seen from slightly above, the underside of the crown sinks into shadow.
+    under = mask & ~shift(mask, -max(2, H // 12), 0, False)
+    canopy[under & (canopy > fr[1])] = fr[1]
+    canopy[mask & ~shift(mask, -1, 0, False)] = fr[0]
     c = np.where(mask, canopy, c).astype(np.uint8)
     # Shadow where the canopy hangs over the trunk.
-    under = (c == tr[1]) | (c == tr[2]) | (c == tr[3])
-    c[under & shift(mask, 1, 0, False)] = tr[0]
+    bark = (c == tr[1]) | (c == tr[2]) | (c == tr[3])
+    c[bark & shift(mask, 1, 0, False)] = tr[0]
+    c[bark & shift(mask, 2, 0, False) & (c != tr[0])] = tr[1]
     if p.fruit > 0:
         a = ctx.ramp(2)
         ys, xs = np.nonzero(mask & (canopy >= fr[2]))
@@ -76,7 +113,8 @@ def tree(ctx: GenContext, p: TreeParams, w: int, h: int) -> np.ndarray:
         for i in rng.choice(len(ys), size=min(n, len(ys)), replace=False):
             put(c, xs[i], ys[i], a[2])
             put(c, xs[i], ys[i] - 1, a[4]) if mask[max(ys[i] - 1, 0), xs[i]] else None
-    return outline(c, ctx.palette)
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, W / 2 + W * 0.06, base + 0.5, W * 0.34, max(1.6, H * 0.07))
 
 
 class PineParams(Params):
@@ -95,11 +133,12 @@ def pine(ctx: GenContext, p: PineParams, w: int, h: int) -> np.ndarray:
     c = _canvas(ctx, w, h)
     H, W = c.shape
     nr, tr = ctx.ramp(0), ctx.ramp(1)
+    base = H - 3
     trunk_h = max(2, H // 7)
-    _trunk(c, W / 2, H - 2 - trunk_h, H - 2, max(2, W // 7), tr)
+    _trunk(c, W / 2, base - trunk_h, base, max(2, W // 7), tr)
     ys, xs = grid(H, W)
     cx = W / 2
-    top, bottom = 1.0, H - 2 - trunk_h + 1
+    top, bottom = 1.0, base - trunk_h + 1
     span = (bottom - top) / (p.tiers * 0.75 + 0.25)
     half_max = W / 2 - 1.2
     for i in range(p.tiers):
@@ -112,13 +151,18 @@ def pine(ctx: GenContext, p: PineParams, w: int, h: int) -> np.ndarray:
         tier = np.where(lit, nr[3], nr[2])
         tier = np.where(lit & (np.abs(xs - cx) > rel * half - 1.5), nr[4], tier)
         tier = np.where(~lit & (np.abs(xs - cx) > rel * half - 1.5), nr[1], tier)
-        tier = np.where(rel > 0.82, nr[1], tier)
+        # The skirt of each tier is its underside, seen from above: dark.
+        tier = np.where(rel > 0.8, nr[1], tier)
+        tier = np.where(rel > 0.92, nr[0], tier)
         c = np.where(inside, tier, c).astype(np.uint8)
         if p.snow:
             s = ctx.palette.ramp("#eef4fa")
-            cap = inside & (rel < 0.35) & (xs < cx + 1)
+            cap = inside & (rel < 0.4) & (xs < cx + 1)
             c[cap] = s[3]
-    return outline(c, ctx.palette)
+            c[cap & (rel < 0.15)] = s[4]
+            c[inside & (rel >= 0.4) & (rel < 0.5) & (xs < cx - 1)] = s[2]
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, W / 2 + W * 0.08, base + 0.5, W * 0.36, max(1.6, H * 0.06))
 
 
 class BushParams(Params):
@@ -131,7 +175,7 @@ def bush(ctx: GenContext, p: BushParams, w: int, h: int) -> np.ndarray:
     H, W = c.shape
     r = ctx.ramp(0)
     rng = ctx.rng("shape")
-    base_y = H - 2
+    base_y = H - 3
     R = W * 0.36
     blobs = [(W / 2, base_y - R * 0.75, R, R * 0.8)]
     for dx in (-0.55, 0.55):
@@ -141,12 +185,15 @@ def bush(ctx: GenContext, p: BushParams, w: int, h: int) -> np.ndarray:
     mask = height > 0.05
     mask[base_y + 1 :] = False
     c = shade(height, mask, r[1:5], dither=0.7)
+    c[mask & ~shift(mask, -1, 0, False)] = r[0]
     if p.berries > 0:
         a = ctx.ramp(1)
-        ys, xs = np.nonzero(mask)
+        ys, xs = np.nonzero(mask & (c > r[1]))
         for i in rng.choice(len(ys), size=int(len(ys) * p.berries * 0.08), replace=False):
             c[ys[i], xs[i]] = a[3]
-    return outline(c, ctx.palette)
+            put(c, xs[i] + 1, ys[i], a[1]) if mask[ys[i], min(xs[i] + 1, W - 1)] else None
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, W / 2 + W * 0.08, base_y + 0.5, R * 1.15, max(1.5, H * 0.07))
 
 
 class RockParams(Params):
@@ -166,7 +213,7 @@ def rock(ctx: GenContext, p: RockParams, w: int, h: int) -> np.ndarray:
     H, W = c.shape
     r = ctx.ramp(0)
     rng = ctx.rng("shape")
-    base = H - 2
+    base = H - 3
     R = min(W, H) * 0.34
     blobs = [(W / 2, base - R * 0.55, R * 1.15, R * 0.85)]
     for _ in range(p.lumps - 1):
@@ -178,7 +225,13 @@ def rock(ctx: GenContext, p: RockParams, w: int, h: int) -> np.ndarray:
     facets = Noise(ctx.rng("facets"), max(W, H), cells=3).tile()[:H, :W]
     height = height + (facets - 0.5) * 0.18 * (height > 0)
     c = shade(height, mask, [r[1], r[2], r[2], r[3], r[4]], dither=0.3, strength=5.0, ambient=0.1)
-    ys, xs = np.nonzero(mask)
+    # A flat-ish lit top plane over a darker front face, the way rocks read in 3/4 view.
+    top = _top_faces(mask, max(2, int(R * 0.45)))
+    c[top & (c < r[3])] = r[3]
+    c[mask & ~shift(mask, 1, 0, False)] = r[4]
+    c[mask & ~top & shift(top, 1, 0, False)] = r[2]
+    c[mask & ~shift(mask, -1, 0, False)] = r[0]
+    ys, xs = np.nonzero(mask & ~top)
     if len(ys):
         i = rng.integers(len(ys))
         x, y = xs[i], ys[i]
@@ -191,13 +244,11 @@ def rock(ctx: GenContext, p: RockParams, w: int, h: int) -> np.ndarray:
                 break
     if p.moss > 0:
         m = ctx.ramp(1)
-        top = mask & ~shift(mask, 1, 0, False)
-        for _ in range(2):
-            top = top | (mask & shift(top, 1, 0, False))
         f = Noise(ctx.rng("moss"), max(W, H), cells=4).tile()[:H, :W]
         c[top & (f < p.moss * 0.8 + 0.1)] = m[2]
         c[top & (f < p.moss * 0.4)] = m[3]
-    return outline(c, ctx.palette)
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, W / 2 + R * 0.25, base + 0.5, R * 1.3, max(1.5, H * 0.07))
 
 
 class FlowerParams(Params):
@@ -216,6 +267,7 @@ def flowers(ctx: GenContext, p: FlowerParams, w: int, h: int) -> np.ndarray:
     H, W = c.shape
     pr, sr = ctx.ramp(0), ctx.ramp(1)
     rng = ctx.rng("shape")
+    shadow = np.zeros_like(c, dtype=bool)
     for _ in range(p.count * w * h):
         x, y = int(rng.integers(2, W - 2)), int(rng.integers(2, H - 3))
         c[y + 1, x] = sr[2]
@@ -223,7 +275,9 @@ def flowers(ctx: GenContext, p: FlowerParams, w: int, h: int) -> np.ndarray:
         for dx, dy in ((0, -1), (-1, 0), (1, 0)):
             put(c, x + dx, y + dy, pr[2])
         c[y, x] = pr[4]
-    return c
+        if x + 1 < W and y + 2 < H:
+            shadow[y + 2, x + 1] = True
+    return drop_shadow(c, shadow)
 
 
 class ChestParams(Params):
@@ -235,31 +289,52 @@ class ChestParams(Params):
     "object",
     ChestParams,
     colors=[("wood", "#9a5a2e"), ("metal", "#e0b640")],
-    doc="Treasure chest with metal bands.",
+    doc="Treasure chest with metal bands, seen from above and in front.",
 )
 def chest(ctx: GenContext, p: ChestParams, w: int, h: int) -> np.ndarray:
     c = _canvas(ctx, w, h)
     H, W = c.shape
     wr, mr = ctx.ramp(0), ctx.ramp(1)
     x0, x1 = 2, W - 3
-    y_lid, y_seam, y1 = int(H * 0.3), int(H * 0.55), H - 2
+    y1 = H - 3
+    y_seam = int(H * 0.58)  # top of the front face of the box
+    y_top = int(H * 0.3)  # back edge of the lid's top face
+    y_lid = int(H * 0.46)  # front edge of the lid's top face
+    bands = (x0 + 2, x1 - 2)
     if p.open:
-        rect(c, x0, y_lid - 3, x1, y_seam - 2, wr[1])
-        rect(c, x0 + 1, y_seam - 2, x1 - 1, y_seam, wr[0])
-        put(c, (x0 + x1) // 2, y_seam - 1, mr[4])
+        # Lid swung back: its inside faces us above the box.
+        rect(c, x0, y_top - 3, x1, y_lid - 3, wr[1])
+        rect(c, x0, y_top - 3, x1, y_top - 3, wr[2])
+        rect(c, x0 + 1, y_lid - 3, x1 - 1, y_lid - 3, wr[0])
+        # The open box from above: rim, dark interior, glinting treasure.
+        rect(c, x0, y_lid - 2, x1, y_seam, wr[3])
+        rect(c, x0 + 1, y_lid - 1, x1 - 1, y_seam - 1, wr[0])
+        for i, x in enumerate(range(x0 + 2, x1 - 1)):
+            put(c, x, y_seam - 1 - (i % 2), mr[3] if i % 3 else mr[4])
+        put(c, (x0 + x1) // 2, y_seam - 2, mr[4])
     else:
-        rect(c, x0, y_lid, x1, y_seam, wr[2])
-        rect(c, x0 + 1, y_lid, x1 - 1, y_lid, wr[4])
-        rect(c, x0, y_lid + 1, x1, y_lid + 1, wr[3])
-    rect(c, x0, y_seam + 1, x1, y1, wr[2])
+        # Lid: top face (lit, seen from above) then a narrow front face.
+        rect(c, x0, y_top, x1, y_lid, wr[3])
+        rect(c, x0 + 1, y_top, x1 - 1, y_top, wr[4])
+        rect(c, x0, y_lid + 1, x1, y_seam - 1, wr[2])
+        rect(c, x0, y_lid + 1, x1, y_lid + 1, wr[4])
+        for bx in bands:
+            rect(c, bx, y_top, bx, y_lid, mr[3])
+            put(c, bx, y_top, mr[4])
+            rect(c, bx, y_lid + 1, bx, y_seam - 1, mr[2])
+    # Box front face.
+    rect(c, x0, y_seam, x1, y1, wr[2])
+    rect(c, x0, y_seam, x1, y_seam, wr[0])
     rect(c, x0, y1, x1, y1, wr[1])
-    rect(c, x0, y_seam + 1, x1, y_seam + 1, wr[0])
-    for bx in (x0 + 2, x1 - 2):
-        rect(c, bx, y_lid if not p.open else y_seam + 1, bx, y1, mr[2])
+    rect(c, x1, y_seam + 1, x1, y1, wr[1])
+    for bx in bands:
+        rect(c, bx, y_seam + 1, bx, y1, mr[2])
     lx = (x0 + x1) // 2
-    rect(c, lx, y_seam, lx + 1, y_seam + 2, mr[3])
+    rect(c, lx, y_seam - (0 if p.open else 1), lx + 1, y_seam + 2, mr[3])
     put(c, lx, y_seam + 1, mr[0])
-    return outline(c, ctx.palette)
+    put(c, lx, y_seam - (0 if p.open else 1), mr[4])
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, W / 2 + 2, y1 + 1, (x1 - x0) / 2 + 1.5, 1.8)
 
 
 @register("sign", "object", Params, colors=[("wood", "#a8743e")], doc="Wooden signpost.")
@@ -268,15 +343,20 @@ def sign(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     H, W = c.shape
     r = ctx.ramp(0)
     px = W // 2 - 1
-    rect(c, px, H // 2, px, H - 2, r[2])
-    rect(c, px + 1, H // 2, px + 1, H - 2, r[1])
-    x0, x1, y0, y1 = 2, W - 3, int(H * 0.2), int(H * 0.6)
+    base = H - 3
+    rect(c, px, H // 2, px, base, r[2])
+    rect(c, px + 1, H // 2, px + 1, base, r[1])
+    x0, x1, y0, y1 = 2, W - 3, int(H * 0.2), int(H * 0.58)
+    rect(c, x0, y0 - 1, x1, y0 - 1, r[4])  # the board's top edge, seen from above
     rect(c, x0, y0, x1, y1, r[3])
-    rect(c, x0, y0, x1, y0, r[4])
+    rect(c, x0, y0, x1, y0, r[2])
+    rect(c, x1, y0, x1, y1, r[2])
     rect(c, x0, y1, x1, y1, r[1])
     for y in range(y0 + 2, y1 - 1, 2):
         rect(c, x0 + 2, y, x1 - 3, y, r[1])
-    return outline(c, ctx.palette)
+    rect(c, px, y1 + 1, px + 1, y1 + 1, r[0])  # the board shades the post
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, px + 2.5, base + 0.5, 3.0, 1.4)
 
 
 @register(
@@ -284,22 +364,38 @@ def sign(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     "object",
     Params,
     colors=[("wood", "#9a6236"), ("bands", "#5c5866")],
-    doc="Wooden barrel with metal hoops.",
+    doc="Wooden barrel with metal hoops; its lid is visible from above.",
 )
 def barrel(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     c = _canvas(ctx, w, h)
     H, W = c.shape
     wr, br = ctx.ramp(0), ctx.ramp(1)
-    x0, x1, y0, y1 = 3, W - 4, int(H * 0.2), H - 2
-    xs = np.arange(x0, x1 + 1)
-    body = cylinder_levels(xs + 0.5, x0, x1 + 1, wr[1:5])
-    c[y0 : y1 + 1, x0 : x1 + 1] = body[None, :]
-    bands = cylinder_levels(xs + 0.5, x0, x1 + 1, br[1:4])
-    for y in (y0 + 2, y1 - 2):
-        c[y, x0 : x1 + 1] = bands
-    rect(c, x0 + 1, y0 - 1, x1 - 1, y0, wr[3])
-    rect(c, x0 + 2, y0, x1 - 2, y0, wr[1])
-    return outline(c, ctx.palette)
+    ys, xs = grid(H, W)
+    cx = W / 2
+    half = W / 2 - 3
+    lid_ry = max(1.5, H * 0.1)
+    y_lid = 2 + lid_ry  # center of the lid ellipse
+    y1 = H - 3
+    t = np.clip((ys - y_lid) / max(y1 - y_lid, 1), 0, 1)
+    bulge = half + 0.8 * np.sin(np.pi * t)
+    body = (ys >= y_lid) & (ys <= y1 + 0.5) & (np.abs(xs - cx) <= bulge)
+    lid = ((xs - cx) / half) ** 2 + ((ys - y_lid) / lid_ry) ** 2 <= 1.0
+    staves = cylinder_levels(xs, cx - bulge, cx + bulge, wr[1:5])
+    c[body] = staves[body]
+    c[body & (np.abs((xs - cx) / np.maximum(bulge, 1)) * 3 % 1 < 0.12)] = wr[1]
+    for frac in (0.18, 0.78):
+        yb = int(y_lid + frac * (y1 - y_lid))
+        hoop = body & (ys.astype(int) == yb)
+        c[hoop] = cylinder_levels(xs, cx - bulge, cx + bulge, br[1:4])[hoop]
+        c[body & (ys.astype(int) == yb + 1)] = wr[0]
+    # The lid: a light ellipse with a dark rim at the front and planks across.
+    c[lid] = wr[3]
+    c[lid & (xs.astype(int) % 3 == 0)] = wr[2]
+    rim = lid & ~(((xs - cx) / (half - 1)) ** 2 + ((ys - y_lid) / (lid_ry - 0.6)) ** 2 <= 1.0)
+    c[rim] = br[3]
+    c[rim & (ys > y_lid)] = br[1]
+    c = outline(c, ctx.palette)
+    return ground_shadow(c, cx + 1.5, y1 + 0.5, half + 1.5, 1.6)
 
 
 @register("fence", "object", Params, colors=[("wood", "#b08048")], doc="Wooden fence segment that tiles horizontally.")
@@ -307,18 +403,35 @@ def fence(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     c = _canvas(ctx, w, h)
     H, W = c.shape
     r = ctx.ramp(0)
-    for y in (int(H * 0.35), int(H * 0.65)):
+    base = H - 3
+    for y in (int(H * 0.35), int(H * 0.62)):
         rect(c, 0, y, W - 1, y + 1, r[2])
-        rect(c, 0, y, W - 1, y, r[3])
-    for px in range(ctx.T // 2 - 1, W, ctx.T):
-        rect(c, px, int(H * 0.15), px + 1, H - 2, r[2])
-        rect(c, px, int(H * 0.15), px, H - 2, r[3])
-        put(c, px, int(H * 0.15) - 1, r[4])
-    return outline(c, ctx.palette)
+        rect(c, 0, y, W - 1, y, r[4])  # the rail's top, seen from above
+        rect(c, 0, y + 2, W - 1, y + 2, r[1])
+    posts = range(ctx.T // 2 - 1, W, ctx.T)
+    for px in posts:
+        top = int(H * 0.15)
+        rect(c, px, top, px + 1, base, r[3])
+        rect(c, px + 1, top, px + 1, base, r[1])
+        rect(c, px, top - 1, px + 1, top - 1, r[4])  # post cap
+        put(c, px + 2, int(H * 0.35) + 1, r[0])
+        put(c, px + 2, int(H * 0.62) + 1, r[0])
+    c = outline(c, ctx.palette)
+    # Rails cast a thin broken shadow on the ground; posts a small round one.
+    ys, xs = np.mgrid[0:H, 0:W]
+    cast = (ys == H - 2) & (xs % 2 == 0)
+    for px in posts:
+        cast |= (ys >= base) & (ys <= base + 1) & (xs >= px + 1) & (xs <= px + 3)
+    return drop_shadow(c, cast)
 
 
 class WallParams(Params):
     style: Literal["stone", "brick"] = Field("stone", description="large stone blocks or small bricks")
+    top: bool = Field(
+        True,
+        description="draw the wall's top surface along its upper edge (3/4 view); "
+        "off for a bare face that also tiles vertically",
+    )
 
 
 @register(
@@ -326,7 +439,8 @@ class WallParams(Params):
     "object",
     WallParams,
     colors=[("stone", "#8a8494")],
-    doc="Solid wall face that tiles in both directions (castles, dungeons, town walls).",
+    doc="Wall segment: a top cap seen from above over a block face; tiles horizontally "
+    "(and vertically with top=false). Castles, dungeons, town walls.",
 )
 def wall(ctx: GenContext, p: WallParams, w: int, h: int) -> np.ndarray:
     T = ctx.T
@@ -347,6 +461,22 @@ def wall(ctx: GenContext, p: WallParams, w: int, h: int) -> np.ndarray:
     f = Noise(ctx.rng("wear"), T, cells=4).tile()
     worn = np.tile(f, (h, w)) > 0.7
     c[worn & (c == r[2])] = r[1]
+    if p.top:
+        cap = T // 2 if h >= 2 else T // 4
+        # Flat capstones seen from above: staggered slabs, each a slightly different shade.
+        sw, sh = max(4, T // 4), max(2, cap // 2)
+        row = ys // sh
+        sx = (xs + (row % 2) * (sw // 2)) % sw
+        slab = row * 97 + ((xs + (row % 2) * (sw // 2)) % W) // sw
+        tones = ctx.rng("cap").choice([r[3], r[3], r[4]], size=int(slab.max()) + 1)
+        top = ys < cap
+        c[top] = tones[slab][top]
+        c[top & (sx == sw - 1)] = r[2]
+        c[top & (ys % sh == sh - 1)] = r[2]
+        c[ys == 0] = r[2]  # far edge of the cap
+        c[ys == cap - 1] = r[4]  # lit front lip
+        c[ys == cap] = r[0]  # the lip's shadow on the face below
+        c[ys == cap + 1] = np.where(c[ys == cap + 1] > r[1], r[1], c[ys == cap + 1])
     return c
 
 
@@ -378,7 +508,7 @@ def _shingles(H: int, W: int, T: int, r: list[int]) -> np.ndarray:
     "object",
     Params,
     colors=[("wood", "#8a5430"), ("frame", "#6e6878")],
-    doc="Arched wooden door in a stone frame (transparent outside the frame).",
+    doc="Arched wooden door set back in a stone frame (transparent outside the frame).",
 )
 def door(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     c = _canvas(ctx, w, h)
@@ -388,20 +518,29 @@ def door(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     cx = W / 2
     half = W / 2 - 1
     arch_y = half + 1
-    frame = (np.abs(xs - cx) <= half) & ((ys >= arch_y) | (((xs - cx) / half) ** 2 + ((ys - arch_y) / half) ** 2 <= 1))
-    frame &= ys < H - 1
-    inner_half = half - 2
-    inner = (np.abs(xs - cx) <= inner_half) & (
-        (ys >= arch_y) | (((xs - cx) / inner_half) ** 2 + ((ys - arch_y) / inner_half) ** 2 <= 1)
-    )
-    inner &= ys < H - 1
+    bottom = H - 2
+
+    def arch(hw: float) -> np.ndarray:
+        m = (np.abs(xs - cx) <= hw) & ((ys >= arch_y) | (((xs - cx) / hw) ** 2 + ((ys - arch_y) / hw) ** 2 <= 1))
+        return m & (ys < bottom)
+
+    frame, inner = arch(half), arch(half - 2)
     c[frame] = fr[3]
     c[frame & (xs > cx)] = fr[2]
+    c[frame & ~shift(frame, 1, 0, False)] = fr[4]  # top of the arch catches the light
     c[inner] = wr[2]
     c[inner & (xs.astype(int) % 3 == 0)] = wr[1]
     c[inner & (np.abs(ys - (H * 0.45)) < 0.6)] = wr[0]
     c[inner & (np.abs(ys - (H * 0.8)) < 0.6)] = wr[0]
-    put(c, int(cx + inner_half - 2), int(H * 0.62), fr[4])
+    # The door is recessed: the frame shades its top and left edges.
+    c[inner & ~shift(inner, 1, 0, False)] = wr[0]
+    c[inner & ~shift(inner, 2, 0, False) & (xs < cx)] = wr[0]
+    c[inner & ~shift(inner, 0, 1, False)] = wr[0]
+    put(c, int(cx + half - 4), int(H * 0.62), fr[4])
+    # Stone threshold in front of the door.
+    step = (np.abs(xs - cx) <= half - 1) & (ys >= bottom) & (ys < bottom + 1)
+    c[step] = fr[4]
+    c[step & (xs > cx + half - 3)] = fr[3]
     return outline(c, ctx.palette)
 
 
@@ -409,6 +548,44 @@ class HouseParams(Params):
     windows: bool = Field(True, description="windows either side of the door")
     chimney: bool = Field(True)
     walls: Literal["plaster", "wood", "stone"] = Field("plaster")
+    roof: Literal["hip", "gable"] = Field(
+        "hip", description="hip: sloped on all sides with lit/shaded side slopes; gable: one front slope"
+    )
+
+
+def _house_roof(c: np.ndarray, T: int, top: int, eave: int, x0: int, x1: int, rr: list[int], style: str) -> np.ndarray:
+    """Draw the roof seen from above and in front; returns its mask."""
+    H, W = c.shape
+    ys, xs = grid(H, W)
+    span = eave - top
+    region = (ys >= top) & (ys < eave + 1) & (xs >= x0) & (xs < x1 + 1)
+    front = _shingles(H, W, T, rr)
+    if style == "gable":
+        mask = region
+        c[mask] = front[mask]
+        c[mask & (xs < x0 + 1)] = rr[3]  # verge boards
+        c[mask & (xs >= x1)] = rr[1]
+    else:
+        rx0, rx1 = x0 + (x1 - x0) * 0.24, x1 - (x1 - x0) * 0.24
+        d = span * 0.45
+        t = np.clip((ys - top) / span, 0, 1)
+        chamfer = np.clip((ys - top) / d, 0, 1)
+        mask = region & (xs >= rx0 - (rx0 - x0) * chamfer) & (xs <= rx1 + (x1 - rx1) * chamfer)
+        fl = rx0 + (x0 - rx0) * t  # front slope edges (the hips)
+        fr = rx1 + (x1 - rx1) * t
+        lit = _shingles(H, W, T, [rr[1], rr[2], rr[3], rr[4], rr[4]])
+        dark = _shingles(H, W, T, [rr[0], rr[0], rr[1], rr[2], rr[2]])
+        c[mask] = front[mask]
+        left, right = mask & (xs < fl), mask & (xs > fr)
+        c[left] = lit[left]
+        c[right] = dark[right]
+        c[mask & (np.abs(xs - fl) < 0.75)] = rr[4]
+        c[mask & (np.abs(xs - fr) < 0.75)] = rr[1]
+    # Ridge cap along the top, a dark fascia along the eave.
+    c[mask & (ys < top + 1)] = rr[4]
+    c[mask & (ys >= top + 1) & (ys < top + 2)] = rr[3]
+    c[mask & (ys >= eave)] = rr[0]
+    return mask
 
 
 @register(
@@ -416,73 +593,98 @@ class HouseParams(Params):
     "object",
     HouseParams,
     colors=[("roof", "#b8483a"), ("walls", "#e6d6b0"), ("trim", "#7a5230")],
-    doc="Front-facing village house with roof, door and windows. Use 2x2 or 3x3.",
+    doc="Village house in 3/4 view: a big roof seen from above over a front wall with door and windows. "
+    "Use 2x2 or 3x3.",
 )
 def house(ctx: GenContext, p: HouseParams, w: int, h: int) -> np.ndarray:
     T = ctx.T
     c = _canvas(ctx, w, h)
     H, W = c.shape
     rr, wr, tr = ctx.ramp(0), ctx.ramp(1), ctx.ramp(2)
-    glass = ctx.palette.ramp("#6ec3e8")
-    roof_bottom = int(H * 0.52)
-    wx0, wx1 = 2, W - 3
+    glass, stone = ctx.palette.ramp(GLASS), ctx.palette.ramp(STONE)
+    eave = int(H * 0.54)
+    base = H - 3  # last wall row; the rows below hold the doorstep and shadow
+    wx0, wx1 = 3, W - 4
+    wall_rows = slice(eave, base + 1)
+    wall_cols = slice(wx0, wx1 + 1)
     # Walls
     if p.walls == "plaster":
-        c[roof_bottom : H - 1, wx0 : wx1 + 1] = wr[3]
+        c[wall_rows, wall_cols] = wr[3]
         f = Noise(ctx.rng("plaster"), T, cells=4).tile()
         speck = np.tile(f, (h, w)) > 0.68
         region = np.zeros_like(speck)
-        region[roof_bottom : H - 1, wx0 : wx1 + 1] = True
+        region[wall_rows, wall_cols] = True
         c[speck & region] = wr[2]
-        rect(c, wx0, roof_bottom, wx0, H - 2, tr[2])
-        rect(c, wx1, roof_bottom, wx1, H - 2, tr[1])
+        rect(c, wx0, eave, wx0, base, tr[3])  # corner posts of the timber frame
+        rect(c, wx1, eave, wx1, base, tr[1])
     elif p.walls == "wood":
         ys, xs = np.mgrid[0:H, 0:W]
         planks = np.where(ys % 3 == 2, wr[1], np.where(ys % 3 == 0, wr[3], wr[2]))
-        c[roof_bottom : H - 1, wx0 : wx1 + 1] = planks[roof_bottom : H - 1, wx0 : wx1 + 1]
+        c[wall_rows, wall_cols] = planks[wall_rows, wall_cols]
+        rect(c, wx1, eave, wx1, base, wr[1])
     else:
         wall_ctx = GenContext(ctx.T, ctx.seed, ctx.key + ":walls", ctx.palette, [ctx.colors[1]])
-        stone = wall(wall_ctx, WallParams(style="brick"), w, h)
-        c[roof_bottom : H - 1, wx0 : wx1 + 1] = stone[roof_bottom : H - 1, wx0 : wx1 + 1]
-    rect(c, wx0, H - 2, wx1, H - 2, wr[1])
-    rect(c, wx0, roof_bottom, wx1, roof_bottom + 1, wr[0])
-    # Door
+        blocks = wall(wall_ctx, WallParams(style="brick", top=False), w, h)
+        c[wall_rows, wall_cols] = blocks[wall_rows, wall_cols]
+    # Stone footing along the bottom of the wall.
+    foot = max(2, T // 8)
+    rect(c, wx0, base - foot + 1, wx1, base, stone[2])
+    rect(c, wx0, base - foot + 1, wx1, base - foot + 1, stone[3])
+    for x in range(wx0 + 2, wx1, max(4, T // 4)):
+        rect(c, x, base - foot + 2, x, base, stone[1])
+    # The eave throws a band of shadow across the top of the wall.
+    for k, lv in enumerate((0, 1)):
+        row = c[eave + 1 + k, wx0 : wx1 + 1]
+        c[eave + 1 + k, wx0 : wx1 + 1] = np.where(row >= wr[2], wr[lv], row)
+    # Door, set into the wall with a step in front.
     dw = max(4, T // 3)
     dx0 = W // 2 - dw // 2
-    dy0 = H - 2 - int(T * 0.6)
-    rect(c, dx0 - 1, dy0 - 1, dx0 + dw, H - 2, tr[0])
-    rect(c, dx0, dy0, dx0 + dw - 1, H - 2, tr[2])
+    dy0 = base - int(T * 0.6)
+    rect(c, dx0 - 1, dy0 - 1, dx0 + dw, base, tr[0])
+    rect(c, dx0, dy0, dx0 + dw - 1, base, tr[2])
     for x in range(dx0 + 1, dx0 + dw, 2):
-        rect(c, x, dy0 + 1, x, H - 2, tr[1])
+        rect(c, x, dy0 + 1, x, base, tr[1])
+    rect(c, dx0, dy0, dx0 + dw - 1, dy0, tr[0])  # recess shadow under the lintel
+    rect(c, dx0, dy0, dx0, base, tr[1])
     put(c, dx0 + dw - 2, dy0 + int(T * 0.3), tr[4])
-    # Windows
+    rect(c, dx0 - 1, base + 1, dx0 + dw, base + 1, stone[4])
+    rect(c, dx0 + dw - 1, base + 1, dx0 + dw, base + 1, stone[2])
+    # Windows with a lit sill and a shadow under it.
     if p.windows and W >= 2 * T:
         ws = max(3, T // 4)
-        wy = roof_bottom + max(3, (H - roof_bottom) // 4)
+        wy = eave + max(4, (base - eave) // 4)
         for wx in (wx0 + (dx0 - wx0) // 2 - ws // 2, dx0 + dw + (wx1 - dx0 - dw) // 2 - ws // 2 + 1):
             rect(c, wx - 1, wy - 1, wx + ws, wy + ws, tr[1])
             rect(c, wx, wy, wx + ws - 1, wy + ws - 1, glass[2])
-            put(c, wx, wy, glass[4])
-            rect(c, wx - 1, wy + ws, wx + ws, wy + ws, tr[3])
-    # Roof: trapezoid of shingles with a dark eave and light ridge
-    shingles = _shingles(H, W, T, rr)
-    ys, xs = grid(H, W)
-    inset = (roof_bottom - ys) / roof_bottom * (W * 0.18)
-    roof_mask = (ys >= 1) & (ys < roof_bottom + 1) & (xs >= 0.5 + inset) & (xs <= W - 0.5 - inset)
-    c[roof_mask] = shingles[roof_mask]
-    side = roof_mask & ((xs < 1.5 + inset) | (xs > W - 1.5 - inset))
-    c[side & (xs < W / 2)] = rr[3]
-    c[side & (xs > W / 2)] = rr[1]
-    c[roof_mask & (ys >= roof_bottom)] = rr[0]
-    c[roof_mask & (ys < 2)] = rr[4]
+            rect(c, wx, wy, wx + ws - 1, wy, glass[1])  # recessed: the top of the pane is in shade
+            put(c, wx + 1, wy + 1, glass[4])
+            put(c, wx + ws - 1, wy + ws - 1, glass[3])
+            rect(c, wx - 1, wy + ws, wx + ws, wy + ws, tr[4])
+            rect(c, wx, wy + ws + 1, wx + ws, wy + ws + 1, wr[1])
+    # Roof, overhanging the walls on both sides.
+    roof_mask = _house_roof(c, T, 1, eave, wx0 - 2, wx1 + 2, rr, p.roof)
     if p.chimney:
-        stone = ctx.palette.ramp("#8a8494")
         cw = max(3, T // 4)
-        cx0 = int(W * 0.68)
-        ctop, cbot = 1, int(roof_bottom * 0.45)
+        cx0 = int(W * 0.66)
+        ctop, cbot = 2, int(eave * 0.5)
+        lid = max(2, T // 8)
         rect(c, cx0, ctop, cx0 + cw - 1, cbot, stone[2])
         rect(c, cx0, ctop, cx0, cbot, stone[3])
-        rect(c, cx0 - 1, ctop, cx0 + cw, ctop + 1, stone[3])
-        rect(c, cx0, ctop + 1, cx0 + cw - 1, ctop + 1, stone[1])
-    c[0, :] = np.where(c[0, :] > 0, c[0, :], 0)
-    return outline(c, ctx.palette)
+        rect(c, cx0 + cw - 1, ctop, cx0 + cw - 1, cbot, stone[1])
+        # Its top, seen from above: a rim around a sooty opening.
+        rect(c, cx0 - 1, ctop - 1, cx0 + cw, ctop + lid - 1, stone[4])
+        rect(c, cx0, ctop, cx0 + cw - 1, ctop + lid - 2, stone[0])
+        rect(c, cx0 - 1, ctop + lid, cx0 + cw, ctop + lid, stone[1])
+        # And its shadow falls on the roof to the lower right.
+        sh = np.zeros_like(roof_mask)
+        sh[ctop + lid + 1 : cbot + 3, cx0 + cw : cx0 + cw + 2] = True
+        sh[cbot + 1 : cbot + 3, cx0 + 1 : cx0 + cw] = True
+        c[sh & roof_mask] = rr[0]
+    c[0, :] = 0
+    c = outline(c, ctx.palette)
+    # The house's own shadow: down the right side and along the ground in front.
+    ys, xs = np.mgrid[0:H, 0:W]
+    cast = ((xs >= wx1 + 2) & (xs <= wx1 + 3) & (ys >= eave + 2) & (ys <= base + 1)) | (
+        (ys >= base + 1) & (ys <= base + 2) & (xs >= wx0 + 2) & (xs <= wx1 + 3)
+    )
+    return drop_shadow(c, cast)

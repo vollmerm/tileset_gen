@@ -9,12 +9,13 @@ GOOD = {
     "theme": "a sunny meadow",
     "palette": [{"name": "grass", "hex": "#5aa83c"}, {"name": "water", "hex": "#3a78c8"}],
     "terrains": [
-        {"name": "water", "generator": "water", "colors": ["water"], "variants": 1, "params": []},
+        {"name": "water", "generator": "water", "colors": ["water"], "variants": 1, "decor": 2, "params": []},
         {
             "name": "grass",
             "generator": "grass",
             "colors": ["grass"],
             "variants": 2,
+            "decor": 3,
             "params": [{"name": "density", "value": 0.4}],
         },
     ],

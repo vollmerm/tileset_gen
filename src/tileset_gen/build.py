@@ -12,10 +12,13 @@ from . import registry
 from .atlas import Atlas, ObjectGroup, WangSet
 from .context import GenContext
 from .generators.autotile import MIXED_CORNERS, compose, corner_mask
+from .generators.terrain import decorate
 from .noise import Noise
 from .palette import Palette
 from .spec import TilesetSpec
 from .validate import merged_colors, validate_spec
+
+DECOR_PROBABILITY = 0.12  # relative to 1.0 for each plain variant
 
 
 class SpecError(ValueError):
@@ -45,6 +48,15 @@ class BuildResult:
 
     def to_rgba(self, indices: np.ndarray) -> np.ndarray:
         return self.lut[self.remap[indices]]
+
+    def probability(self, tid: int) -> float:
+        """Relative chance of picking this tile among its terrain's tiles (decor tiles are rare)."""
+        return self.atlas.meta[tid].props.get("probability", 1.0)
+
+    def pick_terrain(self, name: str, rng: np.random.Generator) -> int:
+        ids = self.terrain_tiles[name]
+        w = np.array([self.probability(t) for t in ids])
+        return int(rng.choice(ids, p=w / w.sum()))
 
 
 def _add_animated(
@@ -81,23 +93,29 @@ def generate(spec: TilesetSpec) -> BuildResult:
         ramps[t.name] = ctx.ramp(0)
         anim = terrain_anim.get(t.name)
         n = anim.frames if anim else 1
+        ms = anim.frame_ms if anim else 0
         ids = []
+        variants = []
         for v in range(t.variants):
             fr = [info.fn(ctx, p, v, k / n) for k in range(n)]
+            ids.append(_add_animated(atlas, fr, f"{t.name}_{v}", "terrain", t.name, ms, terrain=t.name, variant=v))
+            variants.append(fr)
+        frames[t.name] = variants[0]
+        for k in range(t.decor if info.decor else 0):
+            fr = [decorate(info, ctx, p, f, k) for f in variants[k % t.variants]]
             ids.append(
                 _add_animated(
                     atlas,
                     fr,
-                    f"{t.name}_{v}",
+                    f"{t.name}_decor{k}",
                     "terrain",
                     t.name,
-                    anim.frame_ms if anim else 0,
+                    ms,
                     terrain=t.name,
-                    variant=v,
+                    decor=k,
+                    probability=DECOR_PROBABILITY,
                 )
             )
-            if v == 0:
-                frames[t.name] = fr
         if anim:
             frame_ms[t.name] = anim.frame_ms
         res.terrain_tiles[t.name] = ids

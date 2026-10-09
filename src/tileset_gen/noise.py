@@ -96,12 +96,18 @@ def quantize(
     return np.asarray(levels, dtype=np.uint8)[k]
 
 
-def voronoi(rng: np.random.Generator, size: int, grid: int, jitter: float = 0.8):
-    """Periodic jittered-grid Voronoi. Returns (cell_id, f1, f2) arrays of shape (size, size)."""
+def voronoi(rng: np.random.Generator, size: int, grid: int, jitter: float = 0.8, extra=()):
+    """Periodic jittered-grid Voronoi. Returns (cell_id, f1, f2) arrays of shape (size, size).
+
+    `extra` is a list of additional (x, y) seed points, appended after the grid's.
+    """
     cell = size / grid
     gy, gx = np.mgrid[0:grid, 0:grid]
     px = ((gx + 0.5 + (rng.random((grid, grid)) - 0.5) * jitter) * cell).ravel()
     py = ((gy + 0.5 + (rng.random((grid, grid)) - 0.5) * jitter) * cell).ravel()
+    if len(extra):
+        px = np.concatenate([px, [x for x, _ in extra]])
+        py = np.concatenate([py, [y for _, y in extra]])
     ys, xs = np.mgrid[0:size, 0:size] + 0.5
     dx = np.abs(xs[None] - px[:, None, None])
     dy = np.abs(ys[None] - py[:, None, None])

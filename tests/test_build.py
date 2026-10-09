@@ -184,3 +184,80 @@ def test_terrain_variants_share_borders_but_differ_inside(tile_size: int):
         assert np.mean(a[edge] != b[edge]) <= 0.05, g.name
         if g.name not in structural:
             assert np.mean(a[~edge] != b[~edge]) >= 0.04, g.name
+
+
+@pytest.mark.parametrize("tile_size", [16, 32])
+def test_decor_tiles_keep_their_variants_border(tile_size: int):
+    from tileset_gen.generators.terrain import decorate
+    from tileset_gen.registry import by_kind
+
+    for g in by_kind("terrain"):
+        assert g.decor, f"{g.name} has no decor features"
+        for seed in range(3):
+            ctx = GenContext(tile_size, seed, "t", Palette(), g.default_colors())
+            base = g.fn(ctx, g.params(), 0, 0.0)
+            for k in range(len(g.decor)):
+                d = decorate(g, ctx, g.params(), base, k)
+                assert np.array_equal(d[:2], base[:2]) and np.array_equal(d[-2:], base[-2:]), (g.name, k)
+                assert np.array_equal(d[:, :2], base[:, :2]) and np.array_equal(d[:, -2:], base[:, -2:]), (g.name, k)
+                assert np.mean(d != base) >= 0.015 * 16 / tile_size, f"{g.name} decor {k} is barely visible"
+
+
+def test_decor_tiles_are_built_and_rare(tmp_path: Path):
+    spec = load("grassland")
+    res = build(spec, tmp_path, map_size=(8, 6), preview_scale=1)
+    for t in spec.terrains:
+        ids = res.terrain_tiles[t.name]
+        assert len(ids) == t.variants + t.decor
+        decor = [i for i in ids if "decor" in res.atlas.meta[i].props]
+        assert len(decor) == t.decor
+        assert all(0 < res.probability(i) < 1 for i in decor)
+    tsx = ET.parse(tmp_path / "tileset.tsx").getroot()
+    probs = {int(t.get("id")): float(t.get("probability")) for t in tsx.iter("tile") if t.get("probability")}
+    assert set(probs) == {i for ids in res.terrain_tiles.values() for i in ids if res.probability(i) < 1}
+
+    rng = np.random.default_rng(0)
+    picks = [res.pick_terrain("grass", rng) for _ in range(2000)]
+    share = np.mean([res.probability(p) < 1 for p in picks])
+    assert 0.03 < share < 0.15
+
+
+def test_decor_zero_disables_detail_tiles():
+    spec = load("grassland").model_copy(deep=True)
+    for t in spec.terrains:
+        t.decor = 0
+    res = generate(spec)
+    assert all(len(res.terrain_tiles[t.name]) == t.variants for t in spec.terrains)
+
+
+def test_object_shadows_are_translucent_and_preview_is_opaque(tmp_path: Path):
+    from tileset_gen.palette import SHADOW
+
+    spec = load("grassland")
+    res = build(spec, tmp_path, map_size=(12, 8), preview_scale=1)
+    tree = res.atlas.tiles[next(o for o in res.objects if o.name == "oak").tiles[0][0]]
+    assert (tree == SHADOW).any()
+    alpha = np.asarray(Image.open(tmp_path / "tileset.png").convert("RGBA"))[..., 3]
+    assert ((alpha > 0) & (alpha < 255)).any(), "shadows should be semi-transparent in the atlas"
+    assert set(np.unique(alpha)) <= {0, 255, int(res.lut[res.remap[SHADOW], 3])}
+    preview = np.asarray(Image.open(tmp_path / "preview.png").convert("RGBA"))
+    assert (preview[..., 3] == 255).all(), "shadows over ground must composite to opaque pixels"
+
+
+def test_shadow_counts_against_color_budget():
+    spec = load("grassland").model_copy(update={"max_colors": 16})
+    res = generate(spec)
+    used = np.unique(res.remap[res.atlas.sheet()])
+    assert len(used[used > 0]) <= 16
+
+
+def test_wall_without_top_tiles_vertically():
+    from tileset_gen.generators.objects import WallParams, wall
+
+    ctx = GenContext(16, 2, "w", Palette(), ["#8a8494"])
+    mortar = ctx.ramp(0)[0]
+    bare = wall(ctx, WallParams(top=False), 2, 2) == mortar
+    assert np.array_equal(bare[:16], bare[16:]), "block joints must line up across tile rows"
+    capped = wall(ctx, WallParams(top=True), 2, 2) == mortar
+    assert np.array_equal(capped[:, :16], capped[:, 16:]), "the cap must still tile horizontally"
+    assert not np.array_equal(capped[:16], capped[16:])

@@ -11,6 +11,7 @@ from .atlas import WangSet
 from .build import BuildResult
 from .context import GenContext
 from .noise import Noise
+from .palette import SHADOW
 
 
 @dataclass
@@ -124,7 +125,7 @@ def make_preview(res: BuildResult, width: int = 24, height: int = 16) -> Preview
             c = tuple(names[i] for i in (corners[y, x], corners[y, x + 1], corners[y + 1, x + 1], corners[y + 1, x]))
             kinds = set(c)
             if len(kinds) == 1:
-                ground[y, x] = rng.choice(res.terrain_tiles[c[0]])
+                ground[y, x] = res.pick_terrain(c[0], rng)
                 cell_terrain[y][x] = c[0]
                 continue
             ws = by_pair[frozenset(kinds)]
@@ -143,7 +144,7 @@ def make_preview(res: BuildResult, width: int = 24, height: int = 16) -> Preview
                 if host and all(cell_terrain[y0 + j][x0 + i] == host for j in range(rh) for i in range(rw)):
                     for j in range(rh):
                         for i in range(rw):
-                            ground[y0 + j, x0 + i] = rng.choice(res.terrain_tiles[t.name])
+                            ground[y0 + j, x0 + i] = res.pick_terrain(t.name, rng)
                             cell_terrain[y0 + j][x0 + i] = t.name
                     break
 
@@ -179,13 +180,17 @@ def render_preview(res: BuildResult, pmap: PreviewMap, scale: int = 3) -> Image.
     T = res.spec.tile_size
     img = np.zeros((pmap.height * T, pmap.width * T), dtype=np.uint8)
     tiles = res.atlas.tiles
+    darker = res.palette.shadow_lut()
     for y in range(pmap.height):
         for x in range(pmap.width):
             block = tiles[pmap.ground[y, x]].copy()
             oid = pmap.objects[y, x]
             if oid >= 0:
                 o = tiles[oid]
-                block[o > 0] = o[o > 0]
+                shadow = o == SHADOW
+                block[shadow] = darker[block[shadow]]
+                solid = (o > 0) & ~shadow
+                block[solid] = o[solid]
             img[y * T : (y + 1) * T, x * T : (x + 1) * T] = block
     rgba = res.to_rgba(img)
     out = Image.fromarray(rgba, "RGBA")

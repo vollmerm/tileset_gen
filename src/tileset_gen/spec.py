@@ -21,6 +21,9 @@ class TerrainSpec(BaseModel):
     generator: str
     colors: list[str] = Field(default_factory=list, description="palette names or hex, in the generator's slot order")
     variants: int = Field(2, ge=1, le=4)
+    decor: int = Field(
+        2, ge=0, le=6, description="rare detail tiles (tall grass, stones, cracks...) mixed in to break up large areas"
+    )
     params: dict[str, ParamValue] = Field(default_factory=dict)
 
 

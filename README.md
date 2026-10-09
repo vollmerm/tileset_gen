@@ -26,9 +26,9 @@ Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists eve
 
 | File | Contents |
 |---|---|
-| `tileset.png` | Tile atlas (16 columns at 16px). Multi-tile objects are packed as rectangles. |
-| `tileset.json` | Engine-neutral metadata: per-tile name/kind/position, palette, wang sets, object groups, animations. |
-| `tileset.tsx` | Tiled tileset with one corner Wang set covering every terrain (a single terrain-brush palette) and tile animations. |
+| `tileset.png` | Tile atlas (16 columns at 16px). Multi-tile objects are packed as rectangles. Object shadows are semi-transparent pixels. |
+| `tileset.json` | Engine-neutral metadata: per-tile name/kind/position, palette, wang sets, object groups, animations. Decor tiles carry `props.decor` and `props.probability`. |
+| `tileset.tsx` | Tiled tileset with one corner Wang set covering every terrain (a single terrain-brush palette) and tile animations. Decor tiles have a tile `probability`, so the terrain brush scatters them rarely. |
 | `preview.tmx` | Tiled map of the preview (ground + objects layers). |
 | `preview.png` | Rendered preview map. |
 | `spec.json` | The exact spec that was built, so you can rebuild offline. |
@@ -41,7 +41,7 @@ See `examples/specs/` for complete specs. The outline:
 {
   "name": "grassland", "seed": 7, "tile_size": 16, "max_colors": 48,
   "palette": [{"name": "grass", "hex": "#5aa83c"}, ...],        // base colors; ramps are derived
-  "terrains": [{"name": "grass", "generator": "grass", "colors": ["grass"], "variants": 3,
+  "terrains": [{"name": "grass", "generator": "grass", "colors": ["grass"], "variants": 3, "decor": 3,
                 "params": {"density": 0.5}}, ...],
   "transitions": [{"lower": "water", "upper": "sand", "edge_style": "shore"}, ...],  // soft | shore | cliff
   "objects": [{"name": "big_oak", "generator": "tree", "width": 2, "height": 2,
@@ -53,10 +53,14 @@ See `examples/specs/` for complete specs. The outline:
 
 `colors` entries are palette names or `#rrggbb`, in the generator's slot order. Missing slots use the generator defaults.
 
+`variants` (1-4) are plain versions of a terrain that tile with each other. `decor` (0-6, default 2) adds rare detail tiles drawn from the generator's feature set: tall grass, flowers and stones on grass, puddles and cracks on dirt, lily pads on water, footprints and ice on snow. `tileset-gen generators` lists each terrain's features. Each decor tile has probability 0.12, against 1.0 for a plain variant.
+
 ## How it works
 
 - **Index-space rendering.** Generators draw palette indices, not RGB. Each base color expands into a 5-step ramp whose shadows shift toward blue and highlights toward yellow. Before export, the palette is merged down to `max_colors`.
-- **Seamless terrain.** The base noise repeats exactly every tile. Each variant adds its own noise, faded to zero at the tile border, plus interior detail patches. Any two variants meet without a seam but look different inside, which breaks up the per-tile repeat.
+- **Seamless terrain.** Every variant has the same 1px border ring, taken from a shared tile-periodic field. Inside, the field fades to the variant's own noise within a few pixels. The shared border uses finer, lower-contrast noise than the interior so the tile grid doesn't show. Small details near the edge (tufts, pebbles) come from a shared random stream and wrap across the border. Details further in belong to the variant. Any two variants meet without a seam but look different inside.
+- **Decor tiles.** A decor tile is a copy of a variant with one feature drawn inside a 2px margin, so its border matches. The builder adds `decor` of them per terrain at low probability, both in Tiled and in the preview.
+- **3/4 perspective.** Objects use the SNES-JRPG view: you see their fronts and their tops. Examples are the chest lid, barrel head, wall cap, house roof with lit and shaded hip slopes, and the chimney top. Light comes from the upper left. The eaves shade the wall below them, doors and windows sit recessed, and anything standing on the ground casts a shadow down and to the right. Shadows use a reserved palette index that is exported as translucent dark violet, so in Tiled they darken whatever ground is underneath. The preview composites them by stepping the ground two shades down its ramp.
 - **Autotiles.** Each transition produces the 16 corner-Wang combinations. The boundary is a bilinear blend of the four corner values plus tile-periodic noise, so neighboring tiles agree along shared edges. Edge styles add outlines, foam or cliff faces.
 - **Animations.** Animatable terrains (water, lava) are re-rendered with a looping time phase, and frame 0 is the static tile. Transitions that touch an animated terrain get animated too.
 - **Planner.** `planner.py` calls `claude-haiku-5-5` with structured outputs. The system prompt's generator catalog comes from the registry, so the prompt and code stay in sync. If the planned spec fails validation, the errors go back to the model once for a fix.
@@ -70,6 +74,8 @@ Register a function in `src/tileset_gen/generators/` with `@register(name, kind,
 - Animation: `fn(ctx, params, frame, n_frames) -> uint8[T, T]`
 
 Use `ctx.ramp(slot)` for colors and `ctx.rng(...)` for randomness.
+
+Terrains can pass `decor=(feature, ...)` to `register`. A feature is `fn(tile, ctx, params, rng)` that draws into the tile in place, staying 2px inside the edge. Objects should call `outline` and then `ground_shadow`/`drop_shadow` (from `draw.py`), so the shadow doesn't get an outline of its own.
 
 ## Development
 
@@ -88,4 +94,6 @@ uv run ruff check src tests scripts && uv run ruff format src tests scripts
 
 - Autotiles are 16-tile corner sets per transition; there's no 47-tile blob set. Tiled's brush can only put two terrains next to each other if the spec has a transition for that pair.
 - Terrain variants share their border pixels and differ only inside, so a terrain with one variant still repeats every tile. Use 2–3 variants for natural ground.
+- Transition tiles are built from each terrain's first variant only, and there is one tile per corner combination. Long, thin strips made of transitions repeat more than solid areas do.
+- Lava's veins are lines, and blending in a whole per-variant field would draw a vein ring inside each tile. So lava variants only nudge the shared field, and lava repeats more than other terrains. Decor tiles (crust slabs, bubbles) help.
 - In the preview map, the longest transition chain sets the elevation bands. Side branches appear as patches inside their host terrain, and terrains with no transitions appear as hard-edged rectangles.

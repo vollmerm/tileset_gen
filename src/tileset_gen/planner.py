@@ -46,6 +46,7 @@ class WireTerrain(BaseModel):
     generator: str
     colors: list[str]
     variants: int
+    decor: int
     params: list[ParamKV]
 
 
@@ -142,8 +143,11 @@ except for snow).
 # Spec rules
 - palette: every `hex` is exactly 7 characters, "#" plus 6 hex digits (e.g. "#5aa83c").
 - terrains: each needs a unique name, a terrain generator, colors (palette names or #rrggbb, in the \
-generator's color-slot order; omitted slots use defaults), variants, and params. Use 2-3 variants for \
-natural ground (grass, dirt, sand, snow, cobble) and 1 for water, lava and regular floors.
+generator's color-slot order; omitted slots use defaults), variants, decor, and params. Variants are \
+seamless plain versions of the terrain: use 3 for natural ground (grass, dirt, sand, snow, cobble), 2 for \
+water and lava, and 1-2 for regular floors. decor (0-6) adds rare detail tiles drawn from the generator's \
+feature set (tall grass, flowers, stones, puddles, cracks, lily pads...) that break up large areas: \
+use 3-4 for open ground, 2 for water, lava and floors, 0 only for a deliberately uniform surface.
 - transitions: blend `upper` over `lower` with corner autotiles; at most one transition per terrain pair. \
 Connect every terrain: transitions should form a chain ordered like elevation \
 (e.g. water -> sand -> grass -> dirt), optionally with side branches (grass -> flower_meadow). \

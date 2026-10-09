@@ -15,9 +15,9 @@
     {"name": "gold", "hex": "#f0c040"}
   ],
   "terrains": [
-    {"name": "oasis", "generator": "water", "colors": ["oasis"], "variants": 1, "params": {"depth": 0.2, "waves": 0.7}},
-    {"name": "sand", "generator": "sand", "colors": ["sand"], "variants": 3, "params": {"ripples": 0.8}},
-    {"name": "mesa", "generator": "dirt", "colors": ["mesa"], "variants": 2, "params": {"pebbles": 0.6}}
+    {"name": "oasis", "generator": "water", "colors": ["oasis"], "variants": 2, "decor": 2, "params": {"depth": 0.2, "waves": 0.7}},
+    {"name": "sand", "generator": "sand", "colors": ["sand"], "variants": 3, "decor": 4, "params": {"ripples": 0.8}},
+    {"name": "mesa", "generator": "dirt", "colors": ["mesa"], "variants": 3, "decor": 3, "params": {"pebbles": 0.6}}
   ],
   "transitions": [
     {"lower": "oasis", "upper": "sand", "edge_style": "shore", "roughness": 0.4},
