@@ -27,8 +27,8 @@ Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists eve
 | File | Contents |
 |---|---|
 | `tileset.png` | Tile atlas (16 columns at 16px). Multi-tile objects are packed as rectangles. Object shadows are semi-transparent pixels. |
-| `tileset.json` | Engine-neutral metadata: per-tile name/kind/position, palette, wang sets, object groups, animations. Decor tiles carry `props.decor` and `props.probability`. |
-| `tileset.tsx` | Tiled tileset with one corner Wang set covering every terrain (a single terrain-brush palette) and tile animations. Decor tiles have a tile `probability`, so the terrain brush scatters them rarely. |
+| `tileset.json` | Engine-neutral metadata: per-tile name/kind/position, palette, wang sets, object groups, animations. Decor tiles carry `props.decor` and `props.probability`. `connected` lists each fence's tiles by neighbor mask (N=1, E=2, S=4, W=8), plus its gate. |
+| `tileset.tsx` | Tiled tileset with one corner Wang set covering every terrain, including tone patches (a single terrain-brush palette), and tile animations. Each fence gets an edge Wang set, so the Wang brush draws fences that join up; place the gate by hand. Decor tiles have a tile `probability`, so the terrain brush scatters them rarely. |
 | `preview.tmx` | Tiled map of the preview (ground + objects layers). |
 | `preview.png` | Rendered preview map. |
 | `spec.json` | The exact spec that was built, so you can rebuild offline. |
@@ -41,9 +41,9 @@ See `examples/specs/` for complete specs. The outline:
 {
   "name": "grassland", "seed": 7, "tile_size": 16, "max_colors": 48,
   "palette": [{"name": "grass", "hex": "#5aa83c"}, ...],        // base colors; ramps are derived
-  "terrains": [{"name": "grass", "generator": "grass", "colors": ["grass"], "variants": 3, "decor": 3,
+  "terrains": [{"name": "grass", "generator": "grass", "colors": ["grass"], "variants": 3, "decor": 3, "patches": 0.3,
                 "params": {"density": 0.5}}, ...],
-  "transitions": [{"lower": "water", "upper": "sand", "edge_style": "shore"}, ...],  // soft | shore | cliff
+  "transitions": [{"lower": "water", "upper": "sand", "edge_style": "shore"}, ...],  // soft | shore | cliff | blend
   "objects": [{"name": "big_oak", "generator": "tree", "width": 2, "height": 2,
                "place_on": ["grass"], "density": 0.4}, ...],
   "animations": [{"name": "waves", "terrain": "water", "frames": 4, "frame_ms": 250},   // animate a terrain
@@ -55,10 +55,15 @@ See `examples/specs/` for complete specs. The outline:
 
 `variants` (1-4) are plain versions of a terrain that tile with each other. `decor` (0-6, default 2) adds rare detail tiles drawn from the generator's feature set: tall grass, flowers and stones on grass, puddles and cracks on dirt, lily pads on water, footprints and ice on snow. `tileset-gen generators` lists each terrain's features. Each decor tile has probability 0.12, against 1.0 for a plain variant.
 
+`patches` (0-0.6, default 0.3) adds a darker tone of the terrain, such as lush grass, damp earth or deep water. The preview scatters it in organic patches several tiles across, over that share of the terrain's open ground. Behind the scenes it is an extra terrain `<name>_patch`, drawn with the host's ramp one step darker so it costs no palette colors. It joins the host through a `blend` transition: a dithered seam with no outline. Set it to 0 for a uniform surface such as a tiled floor.
+
+Landmark generators (house, well, chest, sign, door) have a `limit`: the preview places at most that many copies per 24x16 of map, whatever their density. `tileset-gen generators` shows the limits. Fences are *connected* objects. The generator draws one tile for each combination of neighbors the fence continues into, plus a gate. The preview builds rectangular pens with a gate in the south side, then puts something inside. Connected objects must be 1x1.
+
 ## How it works
 
-- **Index-space rendering.** Generators draw palette indices, not RGB. Each base color expands into a 5-step ramp whose shadows shift toward blue and highlights toward yellow. Before export, the palette is merged down to `max_colors`.
+- **Index-space rendering.** Generators draw palette indices, not RGB. Each base color expands into a 5-step ramp whose shadows shift toward blue and highlights toward yellow. Before export, the palette is merged down to `max_colors`: the closest pair of rarely used colors is merged first, with distance measured in CIELAB so that merges follow what the eye sees.
 - **Seamless terrain.** Every variant has the same 1px border ring, taken from a shared tile-periodic field. Inside, the field fades to the variant's own noise within a few pixels. The shared border uses finer, lower-contrast noise than the interior so the tile grid doesn't show. Small details near the edge (tufts, pebbles) come from a shared random stream and wrap across the border. Details further in belong to the variant. Any two variants meet without a seam but look different inside.
+- **Tone patches.** Variants can only differ inside one tile, so on their own they can't make variation bigger than a tile. Patches add that larger scale: they are a darker terrain joined to the host by blend autotiles, placed with low-frequency noise.
 - **Decor tiles.** A decor tile is a copy of a variant with one feature drawn inside a 2px margin, so its border matches. The builder adds `decor` of them per terrain at low probability, both in Tiled and in the preview.
 - **3/4 perspective.** Objects use the SNES-JRPG view: you see their fronts and their tops. Examples are the chest lid, barrel head, wall cap, house roof with lit and shaded hip slopes, and the chimney top. Light comes from the upper left. The eaves shade the wall below them, doors and windows sit recessed, and anything standing on the ground casts a shadow down and to the right. Shadows use a reserved palette index that is exported as translucent dark violet, so in Tiled they darken whatever ground is underneath. The preview composites them by stepping the ground two shades down its ramp.
 - **Autotiles.** Each transition produces the 16 corner-Wang combinations. The boundary is a bilinear blend of the four corner values plus tile-periodic noise, so neighboring tiles agree along shared edges. Edge styles add outlines, foam or cliff faces.
@@ -75,7 +80,7 @@ Register a function in `src/tileset_gen/generators/` with `@register(name, kind,
 
 Use `ctx.ramp(slot)` for colors and `ctx.rng(...)` for randomness.
 
-Terrains can pass `decor=(feature, ...)` to `register`. A feature is `fn(tile, ctx, params, rng)` that draws into the tile in place, staying 2px inside the edge. Objects should call `outline` and then `ground_shadow`/`drop_shadow` (from `draw.py`), so the shadow doesn't get an outline of its own.
+Terrains can pass `decor=(feature, ...)` to `register`. A feature is `fn(tile, ctx, params, rng)` that draws into the tile in place, staying 2px inside the edge. Pass `connected=True` for objects that link up tile by tile. Their signature is `fn(ctx, params, mask, gate=False) -> uint8[T, T]`. Objects should call `outline` and then `ground_shadow`/`drop_shadow` (from `draw.py`), so the shadow doesn't get an outline of its own.
 
 ## Development
 

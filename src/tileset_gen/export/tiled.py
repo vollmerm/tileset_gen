@@ -26,7 +26,7 @@ def _wangid(nw: int, ne: int, se: int, sw: int) -> str:
     return f"0,{ne},0,{se},0,{sw},0,{nw}"
 
 
-def _write_wangset(res: BuildResult, root: ET.Element) -> None:
+def _write_wangset(res: BuildResult, root: ET.Element) -> ET.Element:
     """One corner Wang set over every terrain, so Tiled offers a single terrain brush palette.
 
     Each terrain is a Wang color; each transition contributes its tiles with
@@ -57,6 +57,23 @@ def _write_wangset(res: BuildResult, root: ET.Element) -> None:
                     wangids[tid] = _wangid(*(up if c else lo for c in corners))
     for tid in sorted(wangids):
         ET.SubElement(el, "wangtile", {"tileid": str(tid), "wangid": wangids[tid]})
+    return sets
+
+
+def _write_connected(res: BuildResult, sets: ET.Element) -> None:
+    """An edge Wang set per linked object, so fences can be painted with Tiled's Wang brush.
+
+    Each tile's edges are labeled with whether the fence continues that way. The
+    lone post (no edges) and the gate are left out: place those by hand.
+    """
+    for i, cs in enumerate(res.connected):
+        el = ET.SubElement(sets, "wangset", {"name": cs.name, "type": "edge", "tile": str(cs.tiles[2 | 8])})
+        ET.SubElement(el, "wangcolor", {"name": cs.name, "color": _wang_color(i + 7), "tile": str(cs.tiles[2 | 8])})
+        for mask, tid in sorted(cs.tiles.items()):
+            if mask:
+                n, e, s, w = (int(bool(mask & b)) for b in (1, 2, 4, 8))
+                # Tiled order: top, top-right, right, bottom-right, bottom, bottom-left, left, top-left.
+                ET.SubElement(el, "wangtile", {"tileid": str(tid), "wangid": f"{n},0,{e},0,{s},0,{w},0"})
 
 
 def _write(root: ET.Element, path: Path) -> None:
@@ -101,7 +118,7 @@ def write_tsx(res: BuildResult, out: Path) -> None:
             anim = ET.SubElement(tile, "animation")
             for tid, ms in m.animation:
                 ET.SubElement(anim, "frame", {"tileid": str(tid), "duration": str(ms)})
-    _write_wangset(res, root)
+    _write_connected(res, _write_wangset(res, root))
     _write(root, out / "tileset.tsx")
 
 

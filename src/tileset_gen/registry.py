@@ -30,6 +30,8 @@ class GeneratorInfo:
     doc: str
     animatable: bool = False
     decor: tuple[Callable, ...] = ()  # terrain only: features drawn onto rare detail tiles
+    connected: bool = False  # object only: fn(ctx, params, mask, gate) draws one tile per N/E/S/W neighbor mask
+    limit: int | None = None  # object only: landmark cap per 24x16 of preview map
 
     def default_colors(self) -> list[str]:
         return [hexv for _, hexv in self.colors]
@@ -46,9 +48,13 @@ def register(
     doc: str = "",
     animatable: bool = False,
     decor=(),
+    connected: bool = False,
+    limit: int | None = None,
 ):
     def deco(fn):
-        REGISTRY[name] = GeneratorInfo(name, kind, fn, params, tuple(colors), doc, animatable, tuple(decor))
+        REGISTRY[name] = GeneratorInfo(
+            name, kind, fn, params, tuple(colors), doc, animatable, tuple(decor), connected, limit
+        )
         return fn
 
     return deco
@@ -95,8 +101,9 @@ def describe_for_prompt() -> str:
         for g in REGISTRY.values():
             if g.kind != kind:
                 continue
-            flag = " [animatable]" if g.animatable else ""
-            lines.append(f"- {g.name}{flag}: {g.doc}")
+            flag = " [animatable]" if g.animatable else " [connected]" if g.connected else ""
+            limit = f" (landmark: at most {g.limit} per preview map)" if g.limit else ""
+            lines.append(f"- {g.name}{flag}: {g.doc}{limit}")
             if g.colors:
                 lines.append("  colors: " + ", ".join(f"{slot} (default {hexv})" for slot, hexv in g.colors))
             if g.decor:

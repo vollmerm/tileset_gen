@@ -74,7 +74,9 @@ def validate_spec(spec: TilesetSpec) -> list[str]:
     for o in spec.objects:
         check_name("object", o.name)
         check_colors(f"object {o.name!r}", o.colors)
-        check_gen(f"object {o.name!r}", o.generator, "object", o.params)
+        info = check_gen(f"object {o.name!r}", o.generator, "object", o.params)
+        if info is not None and info.connected and (o.width, o.height) != (1, 1):
+            errors.append(f"object {o.name!r}: {o.generator} links up tile by tile, so width and height must be 1")
         for n in o.place_on:
             if n not in terrains:
                 errors.append(f"object {o.name!r}: place_on references unknown terrain {n!r}")

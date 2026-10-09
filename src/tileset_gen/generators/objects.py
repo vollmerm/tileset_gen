@@ -288,6 +288,7 @@ class ChestParams(Params):
     "chest",
     "object",
     ChestParams,
+    limit=3,
     colors=[("wood", "#9a5a2e"), ("metal", "#e0b640")],
     doc="Treasure chest with metal bands, seen from above and in front.",
 )
@@ -337,7 +338,7 @@ def chest(ctx: GenContext, p: ChestParams, w: int, h: int) -> np.ndarray:
     return ground_shadow(c, W / 2 + 2, y1 + 1, (x1 - x0) / 2 + 1.5, 1.8)
 
 
-@register("sign", "object", Params, colors=[("wood", "#a8743e")], doc="Wooden signpost.")
+@register("sign", "object", Params, colors=[("wood", "#a8743e")], doc="Wooden signpost.", limit=3)
 def sign(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     c = _canvas(ctx, w, h)
     H, W = c.shape
@@ -398,30 +399,87 @@ def barrel(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
     return ground_shadow(c, cx + 1.5, y1 + 0.5, half + 1.5, 1.6)
 
 
-@register("fence", "object", Params, colors=[("wood", "#b08048")], doc="Wooden fence segment that tiles horizontally.")
-def fence(ctx: GenContext, p: Params, w: int, h: int) -> np.ndarray:
-    c = _canvas(ctx, w, h)
-    H, W = c.shape
+N, E, S, W = 1, 2, 4, 8  # connection bits for linked objects (fences)
+
+
+class FenceParams(Params):
+    gate: bool = Field(True, description="also draw a gate tile for east-west runs")
+
+
+@register(
+    "fence",
+    "object",
+    FenceParams,
+    colors=[("wood", "#b08048")],
+    connected=True,
+    doc="Wooden rail fence that links up: straight runs, corners, T-joins and a gate. "
+    "The preview builds fenced enclosures with it; size is always 1x1.",
+)
+def fence(ctx: GenContext, p: FenceParams, mask: int, gate: bool = False) -> np.ndarray:
+    """One fence tile. `mask` says which neighbors (N/E/S/W bits) the fence continues into.
+
+    East-west runs are seen from the front: two rails between posts. North-south
+    runs recede into the screen, so their rails are seen from above, as a narrow
+    strip joining one post to the next. `gate` draws a gate panel across an
+    east-west run instead.
+    """
+    T = ctx.T
+    k = max(1, T // 16)  # stroke width: rails and posts thicken at 32px
+    c = np.zeros((T, T), dtype=np.uint8)
     r = ctx.ramp(0)
-    base = H - 3
-    for y in (int(H * 0.35), int(H * 0.62)):
-        rect(c, 0, y, W - 1, y + 1, r[2])
-        rect(c, 0, y, W - 1, y, r[4])  # the rail's top, seen from above
-        rect(c, 0, y + 2, W - 1, y + 2, r[1])
-    posts = range(ctx.T // 2 - 1, W, ctx.T)
-    for px in posts:
-        top = int(H * 0.15)
-        rect(c, px, top, px + 1, base, r[3])
-        rect(c, px + 1, top, px + 1, base, r[1])
-        rect(c, px, top - 1, px + 1, top - 1, r[4])  # post cap
-        put(c, px + 2, int(H * 0.35) + 1, r[0])
-        put(c, px + 2, int(H * 0.62) + 1, r[0])
+    px = T // 2 - k  # the post covers px .. px + 2k - 1
+    pr = px + 2 * k - 1
+    top, ground = int(T * 0.2), T - 3
+    rails = (int(T * 0.33), int(T * 0.58))
+    ys, xs = np.mgrid[0:T, 0:T]
+    if gate:
+        rect(c, 0, top, k - 1, ground, r[2])  # the latch and hinge stiles
+        rect(c, T - k, top, T - 1, ground, r[1])
+        for y in (top + 1, ground - 1 - 2 * k):
+            rect(c, k, y, T - 1 - k, y + k - 1, r[4])
+            rect(c, k, y + k, T - 1 - k, y + 2 * k - 1, r[2])
+        step = 3 * k
+        for x in range(k + 1, T - k - 1, step):
+            rect(c, x, top + 1 + 2 * k, x + k - 1, ground - 2 - 2 * k, r[3])
+            rect(c, x + k, top + 1 + 2 * k, x + k, ground - 2 - 2 * k, r[1])
+        if T >= 32:  # a diagonal brace only fits at 32px
+            for i in range(T - 2 * k - 2):
+                y = int(round(ground - 2 - 2 * k - i * (ground - top - 4 - 4 * k) / (T - 2 * k - 3)))
+                rect(c, k + 1 + i, y, k + 1 + i, y + k - 1, r[2])
+        c = outline(c, ctx.palette)
+        return drop_shadow(c, (ys >= T - 2) & (xs % 2 == 0))
+    # North-south rails: a strip seen from above, running out of the tile past the post.
+    for bit, y0, y1 in ((N, 0, rails[1]), (S, rails[0], T - 1)):
+        if mask & bit:
+            rect(c, px, y0, px + k - 1, y1, r[3])
+            rect(c, px + k, y0, pr, y1, r[2])
+            rect(c, px, y0, px, y1, r[4])
+    # East-west rails, seen from the front: lit top edge, face, shaded underside.
+    for bit, x0, x1 in ((W, 0, px - 1), (E, pr + 1, T - 1)):
+        if mask & bit:
+            for y in rails:
+                rect(c, x0, y, x1, y + k - 1, r[4])
+                rect(c, x0, y + k, x1, y + 2 * k - 1, r[2])
+                rect(c, x0, y + 2 * k, x1, y + 2 * k, r[1])
+    rect(c, px, top, pr, ground, r[2])
+    rect(c, px, top, px + k - 1, ground, r[3])
+    rect(c, pr, top, pr, ground, r[1])
+    rect(c, px, top - 1, pr, top - 1, r[4])  # post cap
+    rect(c, px, ground, pr, ground, r[1])  # foot, darker where it meets the ground
+    if mask & E:
+        for y in rails:
+            rect(c, pr + 1, y + k, pr + 1, y + 2 * k - 1, r[0])  # the rail tucks into the post's shadow
     c = outline(c, ctx.palette)
-    # Rails cast a thin broken shadow on the ground; posts a small round one.
-    ys, xs = np.mgrid[0:H, 0:W]
-    cast = (ys == H - 2) & (xs % 2 == 0)
-    for px in posts:
-        cast |= (ys >= base) & (ys <= base + 1) & (xs >= px + 1) & (xs <= px + 3)
+    # Shadows fall down and to the right: a broken line under rails, a strip beside receding runs.
+    cast = (ys >= ground) & (ys <= ground + 1) & (xs >= px + 1) & (xs <= pr + 2)
+    if mask & W:
+        cast |= (ys >= T - 2) & (xs < px) & (xs % 2 == 0)
+    if mask & E:
+        cast |= (ys >= T - 2) & (xs > pr) & (xs % 2 == 0)
+    if mask & N:
+        cast |= (xs >= pr + 1) & (xs <= pr + 2) & (ys < top) & (ys % 2 == 0)
+    if mask & S:
+        cast |= (xs >= pr + 1) & (xs <= pr + 2) & (ys > ground) & (ys % 2 == 0)
     return drop_shadow(c, cast)
 
 
@@ -507,6 +565,7 @@ def _shingles(H: int, W: int, T: int, r: list[int]) -> np.ndarray:
     "door",
     "object",
     Params,
+    limit=3,
     colors=[("wood", "#8a5430"), ("frame", "#6e6878")],
     doc="Arched wooden door set back in a stone frame (transparent outside the frame).",
 )
@@ -592,6 +651,7 @@ def _house_roof(c: np.ndarray, T: int, top: int, eave: int, x0: int, x1: int, rr
     "house",
     "object",
     HouseParams,
+    limit=3,
     colors=[("roof", "#b8483a"), ("walls", "#e6d6b0"), ("trim", "#7a5230")],
     doc="Village house in 3/4 view: a big roof seen from above over a front wall with door and windows. "
     "Use 2x2 or 3x3.",
@@ -699,6 +759,7 @@ class WellParams(Params):
     "well",
     "object",
     WellParams,
+    limit=2,
     colors=[("stone", "#8a8494"), ("wood", "#8a5a34"), ("water", "#3a78c8")],
     doc="Round stone well seen from above and in front. 1x1 is a bare well; 1x2 or 2x2 adds a roof.",
 )

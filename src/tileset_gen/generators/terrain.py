@@ -63,7 +63,7 @@ def _field(
     dx: float = 0.0,
     dy: float = 0.0,
     edge_power: float = 1.0,
-    flatten: float = 0.3,
+    flatten: float = 0.6,
     fine: bool = True,
     key: str = "field",
 ) -> np.ndarray:
@@ -554,7 +554,7 @@ class GrassParams(Params):
 )
 def grass(ctx: GenContext, p: GrassParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    f = contrast(_field(ctx, variant, 2, octaves=3), 1.2 + p.roughness * 1.2)
+    f = contrast(_field(ctx, variant, 3, octaves=3), 1.2 + p.roughness * 1.2)
     tile = quantize(f, [r[2], r[2], r[3]], dither=0.8)
     tile[f < 0.3] = r[1]
     for x, y, u in _scatter(ctx, variant, int(p.density * T * T / 14)):
@@ -589,18 +589,22 @@ class DirtParams(Params):
 )
 def dirt(ctx: GenContext, p: DirtParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    f = contrast(_field(ctx, variant, 5), 0.7 + p.roughness * 0.6)
-    tile = quantize(f, [r[2], r[2], r[2], r[3]], dither=1.0)
+    # Mottled earth: darker and lighter clumps rather than one flat brown.
+    f = contrast(_field(ctx, variant, 3), 1.3 + p.roughness * 0.9)
+    tile = quantize(f, [r[1], r[2], r[2], r[3]], dither=0.9)
     for x, y, u in _scatter(
         ctx, variant, max(1, round(p.roughness * T * T / 128)), margin=4, key="patches", edge=False
     ):
         _patch(tile, x, y, r[1], r[3], u)
     for x, y, u in _scatter(ctx, variant, int(p.pebbles * T * T / 28)):
-        _px(tile, x, y, r[3])
+        # A clod or pebble: lit top, shaded bottom.
+        _px(tile, x, y, r[4] if u[1] < 0.3 else r[3])
         _px(tile, x, y + 1, r[0])
         if u[0] < 0.5:
-            _px(tile, x + 1, y, r[2])
+            _px(tile, x + 1, y, r[3])
             _px(tile, x + 1, y + 1, r[0])
+    for x, y, _ in _scatter(ctx, variant, T * T // 40, key="crumbs"):
+        _px(tile, x, y, r[1])
     return tile
 
 
@@ -619,8 +623,8 @@ class SandParams(Params):
 )
 def sand(ctx: GenContext, p: SandParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    f = contrast(_field(ctx, variant, 2), 2.0)
-    tile = quantize(f, [r[2], r[3]], dither=1.0)
+    f = contrast(_field(ctx, variant, 3), 2.0)
+    tile = quantize(f, [r[2], r[3], r[3]], dither=1.0)
     ys, xs = np.mgrid[0:T, 0:T]
     bend = (Noise(ctx.rng("bend", variant), T, cells=2).tile() - 0.5) * T * 0.25 * _inner(T)
     wave = (ys + 1.5 * np.sin(2 * np.pi * xs / T) + 0.8 * np.sin(4 * np.pi * xs / T + 1.0) + bend) % (T / 2)

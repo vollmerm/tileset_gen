@@ -65,6 +65,12 @@ def compose(
         out[low_edge] = lower_ramp[4]
         out[low_edge & shift(low_edge, 0, 1, False) & ~shift(b, 1, 0, False)] = lower_ramp[3]
         out[up_edge] = upper_ramp[1]
+    elif style == "blend":
+        # Tone change within one kind of ground: no outline, just a dithered seam.
+        ys, xs = np.mgrid[0 : out.shape[0], 0 : out.shape[1]]
+        checker = (xs + ys) % 2 == 0
+        out[up_edge & checker] = lo[up_edge & checker]
+        out[low_edge & checker] = up[low_edge & checker]
     elif style == "cliff":
         depth = max(3, T // 4)
         ys, xs = np.mgrid[0 : out.shape[0], 0 : out.shape[1]]

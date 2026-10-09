@@ -17,6 +17,7 @@ class GenContext:
     key: str
     palette: Palette
     colors: list[str]
+    tone: int = 0  # shifts the first color's ramp this many steps (-1 = one shade darker throughout)
 
     def rng(self, *parts) -> np.random.Generator:
         """A generator seeded only by (spec seed, element key, parts): stable across runs."""
@@ -24,4 +25,7 @@ class GenContext:
         return np.random.default_rng(int.from_bytes(digest, "little"))
 
     def ramp(self, slot: int = 0, steps: int = 5) -> list[int]:
-        return self.palette.ramp(self.colors[slot], steps)
+        r = self.palette.ramp(self.colors[slot], steps)
+        if slot == 0 and self.tone:
+            r = [r[min(max(i + self.tone, 0), steps - 1)] for i in range(steps)]
+        return r

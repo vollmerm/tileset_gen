@@ -39,6 +39,15 @@ class ObjectGroup:
     tiles: list[list[int]]  # [row][col] tile ids
 
 
+@dataclass
+class ConnectedSet:
+    """Tiles of a linked object (a fence): one per N=1/E=2/S=4/W=8 neighbor mask, plus an optional gate."""
+
+    name: str
+    tiles: dict[int, int]  # mask -> tile id
+    gate: int | None = None
+
+
 class Atlas:
     def __init__(self, tile_size: int, columns: int = 16):
         self.T = tile_size

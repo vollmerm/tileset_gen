@@ -37,7 +37,7 @@
     {"name": "cottage", "generator": "house", "colors": ["roof", "plaster", "bark"], "width": 3, "height": 3, "place_on": ["grass", "dirt"], "density": 0.5},
     {"name": "chest", "generator": "chest", "colors": ["bark", "gold"], "place_on": ["dirt"], "density": 0.1},
     {"name": "signpost", "generator": "sign", "colors": ["bark"], "place_on": ["dirt"], "density": 0.1},
-    {"name": "fence", "generator": "fence", "place_on": ["grass"], "density": 0.1}
+    {"name": "fence", "generator": "fence", "place_on": ["grass"], "density": 0.5}
   ],
   "animations": [
     {"name": "water_waves", "terrain": "water", "frames": 4, "frame_ms": 250},

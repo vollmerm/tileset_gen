@@ -46,6 +46,9 @@ def test_generator_extremes(name: str, params: dict, T: int):
         if g.kind == "terrain":
             out = [g.fn(ctx, p, v, ph) for v in (0, 3) for ph in (0.0, 0.5)]
             shape = (T, T)
+        elif g.connected:
+            out = [g.fn(ctx, p, mask) for mask in range(16)] + [g.fn(ctx, p, 2 | 8, gate=True)]
+            shape = (T, T)
         elif g.kind == "object":
             out = [g.fn(ctx, p, *size)]
             shape = (size[1] * T, size[0] * T)

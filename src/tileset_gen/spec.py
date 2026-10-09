@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 ParamValue = float | int | str | bool
-EdgeStyle = Literal["soft", "shore", "cliff"]
+EdgeStyle = Literal["soft", "shore", "cliff", "blend"]
 
 
 class NamedColor(BaseModel):
@@ -23,6 +23,12 @@ class TerrainSpec(BaseModel):
     variants: int = Field(2, ge=1, le=4)
     decor: int = Field(
         2, ge=0, le=6, description="rare detail tiles (tall grass, stones, cracks...) mixed in to break up large areas"
+    )
+    patches: float = Field(
+        0.3,
+        ge=0.0,
+        le=0.6,
+        description="share of the terrain's open areas covered by darker multi-tile patches (lush grass, damp earth)",
     )
     params: dict[str, ParamValue] = Field(default_factory=dict)
 

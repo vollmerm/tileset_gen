@@ -9,16 +9,57 @@ from pathlib import Path
 import numpy as np
 
 from . import registry
-from .atlas import Atlas, ObjectGroup, WangSet
+from .atlas import Atlas, ConnectedSet, ObjectGroup, WangSet
 from .context import GenContext
 from .generators.autotile import MIXED_CORNERS, compose, corner_mask
+from .generators.objects import E, W
 from .generators.terrain import decorate
 from .noise import Noise
 from .palette import SHADOW, Palette
-from .spec import TilesetSpec
+from .spec import AnimationSpec, TerrainSpec, TilesetSpec, TransitionSpec
 from .validate import merged_colors, validate_spec
 
 DECOR_PROBABILITY = 0.12  # relative to 1.0 for each plain variant
+
+
+PATCH_SUFFIX = "_patch"
+
+
+def with_patches(spec: TilesetSpec) -> tuple[TilesetSpec, dict[str, str]]:
+    """Add a darker "patch" terrain plus a blend transition for every terrain with `patches` > 0.
+
+    A patch is drawn with its host's colors one ramp step darker (see `GenContext.tone`),
+    so it costs no palette colors. Otherwise patches are ordinary terrains to the rest
+    of the pipeline, so they get autotiles, animation, a Tiled brush color and preview
+    placement for free.
+    Returns the expanded spec and a patch -> host map.
+    """
+    names = {t.name for t in spec.terrains}
+    out = spec.model_copy(deep=True)
+    patch_of: dict[str, str] = {}
+    for t in spec.terrains:
+        name = t.name + PATCH_SUFFIX
+        if t.patches <= 0 or name in names:
+            continue
+        out.terrains.append(
+            TerrainSpec(
+                name=name,
+                generator=t.generator,
+                colors=t.colors,
+                variants=min(2, t.variants),
+                decor=t.decor // 2,
+                patches=0.0,
+                params=t.params,
+            )
+        )
+        out.transitions.append(TransitionSpec(lower=t.name, upper=name, edge_style="blend", roughness=0.7))
+        for a in spec.animations:
+            if a.terrain == t.name:
+                out.animations.append(
+                    AnimationSpec(name=a.name + PATCH_SUFFIX, terrain=name, frames=a.frames, frame_ms=a.frame_ms)
+                )
+        patch_of[name] = t.name
+    return out, patch_of
 
 
 class SpecError(ValueError):
@@ -29,12 +70,14 @@ class SpecError(ValueError):
 
 @dataclass
 class BuildResult:
-    spec: TilesetSpec
+    spec: TilesetSpec  # with patch terrains added
     atlas: Atlas
     palette: Palette
+    patch_of: dict[str, str] = field(default_factory=dict)  # patch terrain -> host terrain
     terrain_tiles: dict[str, list[int]] = field(default_factory=dict)
     wangsets: list[WangSet] = field(default_factory=list)
     objects: list[ObjectGroup] = field(default_factory=list)
+    connected: list[ConnectedSet] = field(default_factory=list)
     animations: dict[str, int] = field(default_factory=dict)  # standalone animation -> first tile id
     remap: np.ndarray | None = None
     lut: np.ndarray | None = None
@@ -79,13 +122,14 @@ def generate(spec: TilesetSpec) -> BuildResult:
     errors = validate_spec(spec)
     if errors:
         raise SpecError(errors)
+    spec, patch_of = with_patches(spec)
     T = spec.tile_size
     palette = Palette(spec.palette_dict())
     atlas = Atlas(T, columns=max(8, 256 // T))
-    res = BuildResult(spec, atlas, palette)
+    res = BuildResult(spec, atlas, palette, patch_of=patch_of)
 
-    def ctx_for(key: str, colors: list[str], info: registry.GeneratorInfo) -> GenContext:
-        return GenContext(T, spec.seed, key, palette, merged_colors(colors, info))
+    def ctx_for(key: str, colors: list[str], info: registry.GeneratorInfo, tone: int = 0) -> GenContext:
+        return GenContext(T, spec.seed, key, palette, merged_colors(colors, info), tone)
 
     terrain_anim = {a.terrain: a for a in spec.animations if a.terrain}
     frames: dict[str, list[np.ndarray]] = {}
@@ -95,7 +139,7 @@ def generate(spec: TilesetSpec) -> BuildResult:
     for t in spec.terrains:
         info = registry.get(t.generator)
         p = info.params.model_validate(t.params)
-        ctx = ctx_for(f"terrain:{t.name}", t.colors, info)
+        ctx = ctx_for(f"terrain:{t.name}", t.colors, info, tone=-1 if t.name in patch_of else 0)
         ramps[t.name] = ctx.ramp(0)
         anim = terrain_anim.get(t.name)
         n = anim.frames if anim else 1
@@ -153,6 +197,20 @@ def generate(spec: TilesetSpec) -> BuildResult:
         info = registry.get(o.generator)
         p = info.params.model_validate(o.params)
         ctx = ctx_for(f"object:{o.name}", o.colors, info)
+        if info.connected:
+            # All 16 neighbor masks as a 4x4 block (mask = row * 4 + col), then the gate.
+            T = ctx.T
+            block = np.zeros((4 * T, 4 * T), dtype=np.uint8)
+            for m in range(16):
+                block[(m // 4) * T : (m // 4 + 1) * T, (m % 4) * T : (m % 4 + 1) * T] = info.fn(ctx, p, m)
+            rows = atlas.add_block(block, o.name, "object", o.name, object=o.name)
+            cs = ConnectedSet(o.name, {m: rows[m // 4][m % 4] for m in range(16)})
+            for m, tid in cs.tiles.items():
+                atlas.meta[tid].props["mask"] = m
+            if getattr(p, "gate", False):
+                cs.gate = atlas.add(info.fn(ctx, p, E | W, gate=True), f"{o.name}_gate", "object", o.name, gate=True)
+            res.connected.append(cs)
+            continue
         canvas = info.fn(ctx, p, o.width, o.height)
         if o.width * o.height == 1:
             rows = [[atlas.add(canvas, o.name, "object", o.name, object=o.name)]]

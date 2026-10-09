@@ -48,6 +48,15 @@ def write_png_json(res: BuildResult, out: Path) -> None:
             for ws in res.wangsets
         ],
         "objects": [{"name": o.name, "width": o.width, "height": o.height, "tiles": o.tiles} for o in res.objects],
+        "connected": [
+            {
+                "name": c.name,
+                "mask_bits": "N=1,E=2,S=4,W=8",
+                "tiles": {str(m): t for m, t in c.tiles.items()},
+                "gate": c.gate,
+            }
+            for c in res.connected
+        ],
         "animations": res.animations,
     }
     (out / "tileset.json").write_text(json.dumps(doc, indent=2) + "\n")

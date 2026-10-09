@@ -65,6 +65,16 @@ def make_ramp(base: RGB, steps: int = 5, hue_shift: float = 0.035) -> list[RGB]:
     return out
 
 
+def to_lab(rgb: np.ndarray) -> np.ndarray:
+    """sRGB (0-255, shape (..., 3)) to CIELAB, so color distances match what the eye sees."""
+    c = rgb / 255.0
+    c = np.where(c > 0.04045, ((c + 0.055) / 1.055) ** 2.4, c / 12.92)
+    xyz = c @ np.array([[0.4124, 0.2126, 0.0193], [0.3576, 0.7152, 0.1192], [0.1805, 0.0722, 0.9505]])
+    xyz /= np.array([0.95047, 1.0, 1.08883])
+    f = np.where(xyz > 0.008856, np.cbrt(xyz), 7.787 * xyz + 16 / 116)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], axis=-1)
+
+
 class Palette:
     """Indexed palette built up lazily as generators request ramps."""
 
@@ -130,12 +140,11 @@ class Palette:
             max_colors -= 1
         alive = [i for i in range(2, n) if counts[i] > 0]
         weight = {i: int(counts[i]) for i in alive}
-        cols = np.array(self.colors, dtype=float)
-        lum = np.array([0.30, 0.59, 0.11])
+        lab = to_lab(np.array(self.colors, dtype=float))
 
         def dist(a: int, b: int) -> float:
-            d = cols[a] - cols[b]
-            return float(np.sum(d * d * lum))
+            d = lab[a] - lab[b]
+            return float(np.sum(d * d))
 
         while len(alive) > max_colors:
             best = None

@@ -39,19 +39,29 @@ def test_example_builds_and_exports(path: Path, tmp_path: Path):
     assert int(tsx.get("tilecount")) == count
     for frame in tsx.iter("frame"):
         assert 0 <= int(frame.get("tileid")) < count
-    wangsets = list(tsx.iter("wangset"))
-    assert len(wangsets) == 1
-    n_colors = len(list(wangsets[0].iter("wangcolor")))
-    assert n_colors == len(spec.terrains)
-    tile_ids = [int(wt.get("tileid")) for wt in tsx.iter("wangtile")]
+    corner_sets = [w for w in tsx.iter("wangset") if w.get("type") == "corner"]
+    assert len(corner_sets) == 1
+    terrain_set = corner_sets[0]
+    n_colors = len(list(terrain_set.iter("wangcolor")))
+    assert n_colors == len(res.spec.terrains)  # includes the generated tone-patch terrains
+    tile_ids = [int(wt.get("tileid")) for wt in terrain_set.iter("wangtile")]
     assert len(tile_ids) == len(set(tile_ids))
     expected = {t for ws in res.wangsets for ids in ws.tiles.values() for t in ids}
     expected |= {t for ids in res.terrain_tiles.values() for t in ids}
     assert set(tile_ids) == expected
-    for wt in tsx.iter("wangtile"):
+    for wt in terrain_set.iter("wangtile"):
         ids = [int(v) for v in wt.get("wangid").split(",")]
         assert len(ids) == 8 and ids[0::2] == [0, 0, 0, 0]
         assert all(1 <= v <= n_colors for v in ids[1::2])
+    edge_sets = {w.get("name"): w for w in tsx.iter("wangset") if w.get("type") == "edge"}
+    assert set(edge_sets) == {c.name for c in res.connected}
+    for cs in res.connected:
+        labeled = {int(wt.get("tileid")): wt.get("wangid") for wt in edge_sets[cs.name].iter("wangtile")}
+        assert set(labeled) == {t for m, t in cs.tiles.items() if m}
+        for m, t in cs.tiles.items():
+            if m:
+                ids = [int(v) for v in labeled[t].split(",")]
+                assert ids[1::2] == [0, 0, 0, 0] and ids[0::2] == [int(bool(m & b)) for b in (1, 2, 4, 8)]
 
     tmx = ET.parse(tmp_path / "preview.tmx").getroot()
     for data in tmx.iter("data"):
@@ -279,3 +289,72 @@ def test_preview_shadows_survive_palette_reduction(tmp_path: Path):
     build(spec, tmp_path, map_size=(8, 6), preview_scale=1)
     preview = np.asarray(Image.open(tmp_path / "preview.png").convert("RGBA"))
     assert (preview[..., 3] == 255).all()
+
+
+def test_tone_patches_become_blended_terrains():
+    from tileset_gen.build import PATCH_SUFFIX
+
+    spec = load("grassland")
+    res = generate(spec)
+    for t in spec.terrains:
+        patch = t.name + PATCH_SUFFIX
+        assert res.patch_of[patch] == t.name
+        ws = next(w for w in res.wangsets if (w.lower, w.upper) == (t.name, patch))
+        assert set(ws.tiles) == set(ALL_CORNERS)
+        # Darker: the patch's plain tile averages a lower luminance than its host's.
+        lum = lambda tid: res.to_rgba(res.atlas.tiles[tid])[..., :3].astype(float).mean()  # noqa: E731
+        assert lum(res.terrain_tiles[patch][0]) < lum(res.terrain_tiles[t.name][0])
+    no_patches = spec.model_copy(deep=True)
+    for t in no_patches.terrains:
+        t.patches = 0.0
+    assert generate(no_patches).patch_of == {}
+
+
+def test_preview_shows_patches_and_keeps_them_off_the_elevation_chain():
+    from tileset_gen.preview import make_preview, terrain_chain
+
+    res = generate(load("grassland"))
+    assert not set(terrain_chain(res)) & set(res.patch_of)
+    pmap = make_preview(res, 32, 20)
+    patch_tiles = {tid for p in res.patch_of for tid in res.terrain_tiles[p]}
+    assert np.isin(pmap.ground, list(patch_tiles)).any()
+
+
+def test_fence_links_up_in_the_preview():
+    from tileset_gen.preview import make_preview
+
+    res = generate(load("grassland"))
+    cs = res.connected[0]
+    assert set(cs.tiles) == set(range(16)) and cs.gate is not None
+    mask_of = {tid: m for m, tid in cs.tiles.items()} | {cs.gate: 2 | 8}
+    pmap = make_preview(res, 32, 20)
+    fence = np.isin(pmap.objects, list(mask_of))
+    assert fence.sum() >= 8 and (pmap.objects == cs.gate).any()
+    h, w = fence.shape
+    for y, x in zip(*np.nonzero(fence)):
+        m = mask_of[int(pmap.objects[y, x])]
+        for bit, back, dy, dx in ((1, 4, -1, 0), (2, 8, 0, 1), (4, 1, 1, 0), (8, 2, 0, -1)):
+            ny, nx = y + dy, x + dx
+            linked = 0 <= ny < h and 0 <= nx < w and fence[ny, nx] and mask_of[int(pmap.objects[ny, nx])] & back
+            assert bool(m & bit) == bool(linked), (y, x, m)
+
+
+def test_connected_objects_must_be_one_tile():
+    spec = load("grassland").model_copy(deep=True)
+    next(o for o in spec.objects if o.generator == "fence").width = 2
+    assert any("width and height must be 1" in e for e in validate_spec(spec))
+
+
+def test_landmarks_are_capped_in_the_preview():
+    from tileset_gen.preview import make_preview
+
+    spec = load("grassland").model_copy(deep=True)
+    for o in spec.objects:
+        o.density = 1.0
+    res = generate(spec)
+    pmap = make_preview(res, 24, 16)
+    for o, group in ((o, next(g for g in res.objects if g.name == o.name)) for o in spec.objects if o.name != "fence"):
+        limit = REGISTRY[o.generator].limit
+        if limit:
+            copies = int(np.sum(pmap.objects == group.tiles[0][0]))
+            assert copies <= limit, (o.name, copies)

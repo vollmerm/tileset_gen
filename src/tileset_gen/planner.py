@@ -47,13 +47,14 @@ class WireTerrain(BaseModel):
     colors: list[str]
     variants: int
     decor: int
+    patches: float
     params: list[ParamKV]
 
 
 class WireTransition(BaseModel):
     lower: str
     upper: str
-    edge_style: Literal["soft", "shore", "cliff"]
+    edge_style: Literal["soft", "shore", "cliff", "blend"]
     roughness: float
 
 
@@ -147,19 +148,25 @@ generator's color-slot order; omitted slots use defaults), variants, decor, and 
 seamless plain versions of the terrain: use 3 for natural ground (grass, dirt, sand, snow, cobble), 2 for \
 water and lava, and 1-2 for regular floors. decor (0-6) adds rare detail tiles drawn from the generator's \
 feature set (tall grass, flowers, stones, puddles, cracks, lily pads...) that break up large areas: \
-use 3-4 for open ground, 2 for water, lava and floors, 0 only for a deliberately uniform surface.
+use 3-4 for open ground, 2 for water, lava and floors, 0 only for a deliberately uniform surface. \
+patches (0-0.6) covers that share of the terrain's open areas with darker multi-tile patches of the same \
+ground (lush grass, damp earth, deep water) that blend in without an outline: 0.25-0.4 for natural ground \
+and water, 0-0.15 for built floors.
 - transitions: blend `upper` over `lower` with corner autotiles; at most one transition per terrain pair. \
 Connect every terrain: transitions should form a chain ordered like elevation \
 (e.g. water -> sand -> grass -> dirt), optionally with side branches (grass -> flower_meadow). \
 A terrain with no transition can only appear as hard-edged rectangles, so only leave one unconnected \
 when that is intended (a carpet, a plaza). \
 edge_style: "shore" for land over water, "cliff" for raised ground (mesas, plateaus, floors over lava pits), \
+"blend" only between two tones of the same kind of ground (light and dark grass; never grass to dirt), \
 "soft" otherwise. roughness 0-1 (0.3-0.6 typical).
 - objects: object generator, size in tiles (width/height 1-4; trees 1x1 or 2x2, houses 2x2 or 3x3, \
 pine 1x2, wells 1x2 or 2x2), place_on lists terrain names it may stand on (never water/lava). \
 density (0-1) controls how often it appears in the preview map: 0.5-0.8 for common scenery \
-(trees, bushes, rocks, flowers), 0.3-0.5 for props (barrels, fences, signs), 0.2-0.4 for landmarks \
-(houses, chests). Values below 0.1 make the object nearly invisible.
+(trees, bushes, rocks, flowers), 0.3-0.5 for props (barrels, signs), 0.2-0.4 for landmarks \
+(houses, chests). [connected] generators such as fence link up tile by tile: always 1x1, and the preview \
+draws fenced enclosures with a gate (density 0.3-0.7 gives 1-2 pens), so give them place_on terrains with \
+room, like grass or dirt. Values below 0.1 make the object nearly invisible.
 - animations: either set `terrain` to an animatable terrain's name (generator null) to animate that terrain, \
 or set `generator` to an animation generator (terrain null). frames 2-8, frame_ms 80-400.
 - params: list of {{name, value}} using only the params listed for that generator, within their ranges \
