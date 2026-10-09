@@ -2,9 +2,11 @@
 
 Signature: fn(ctx, params, variant, phase) -> uint8[T, T].
 
-Variants share one periodic base field (so any two variants tile against each
-other) and differ only in small interior details. `phase` in [0, 1) is the
-animation time for animatable terrains; phase 0 is the static tile.
+Variants share one periodic base field, plus a per-variant field that fades to
+zero at the tile border (see `_field`). Any two variants therefore meet without
+a seam while their interiors differ, which breaks up the 1-tile repeat.
+`phase` in [0, 1) is the animation time for animatable terrains; phase 0 is the
+static tile. Noise lattice sizes are given for 16px tiles and scale with T.
 """
 
 from __future__ import annotations
@@ -17,6 +19,50 @@ from pydantic import Field
 from ..context import GenContext
 from ..noise import Noise, contrast, quantize, voronoi
 from ..registry import Params, register
+
+
+def _window(T: int) -> np.ndarray:
+    w = np.sin(np.pi * (np.arange(T) + 0.5) / T)
+    return np.outer(w, w)
+
+
+def _field(
+    ctx: GenContext,
+    variant: int,
+    cells: int | tuple[int, int],
+    octaves: int = 2,
+    amount: float = 0.6,
+    persistence: float = 0.5,
+    t: float = 0.0,
+    tcells: int = 1,
+    dx: float = 0.0,
+    dy: float = 0.0,
+    edge_power: float = 1.0,
+) -> np.ndarray:
+    """Tile-periodic base noise plus edge-windowed per-variant noise.
+
+    Raise `edge_power` when the caller amplifies small differences (e.g. ridges),
+    to pin the border closer to the shared base field.
+    """
+    T = ctx.T
+    k = max(1, T // 16)
+    scaled = cells * k if isinstance(cells, int) else (cells[0] * k, cells[1] * k)
+    base = Noise(ctx.rng("base"), T, cells=scaled, octaves=octaves, persistence=persistence, tcells=tcells)
+    f = base.tile(t=t, dx=dx, dy=dy)
+    local = Noise(ctx.rng("local", variant), T, cells=3 * k, octaves=2).tile()
+    return f + (local - 0.5) * amount * _window(T) ** edge_power
+
+
+def _patch(tile: np.ndarray, x: int, y: int, shadow: int, light: int, rng: np.random.Generator) -> None:
+    """A small irregular shadow blob with a light rim on top (dips, drifts, worn spots)."""
+    w = int(rng.integers(2, 4))
+    for dx in range(-w, w + 1):
+        tile[y, x + dx] = shadow
+        if abs(dx) < w:
+            tile[y + 1, x + dx] = shadow
+            tile[y - 1, x + dx] = light
+    if rng.random() < 0.5:
+        tile[y + 1, x + w] = shadow
 
 
 def _interior(rng: np.random.Generator, T: int, n: int, margin: int = 1):
@@ -41,7 +87,7 @@ class GrassParams(Params):
 )
 def grass(ctx: GenContext, p: GrassParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    f = contrast(Noise(ctx.rng("base"), T, cells=2, octaves=3).tile(), 1.2 + p.roughness * 1.2)
+    f = contrast(_field(ctx, variant, 2, octaves=3), 1.2 + p.roughness * 1.2)
     tile = quantize(f, [r[2], r[2], r[3]], dither=0.8)
     tile[f < 0.3] = r[1]
     rng = ctx.rng("detail", variant)
@@ -69,10 +115,11 @@ class DirtParams(Params):
 @register("dirt", "terrain", DirtParams, colors=[("soil", "#9a6b42")], doc="Bare earth or a dirt path, with pebbles.")
 def dirt(ctx: GenContext, p: DirtParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    f = contrast(Noise(ctx.rng("base"), T, cells=4, octaves=2).tile(), 0.8 + p.roughness * 0.8)
-    tile = quantize(f, [r[2], r[2], r[3]], dither=1.0)
-    tile[f < 0.2] = r[1]
+    f = contrast(_field(ctx, variant, 5, amount=0.5), 0.7 + p.roughness * 0.6)
+    tile = quantize(f, [r[2], r[2], r[2], r[3]], dither=1.0)
     rng = ctx.rng("detail", variant)
+    for x, y in _interior(rng, T, max(1, round(p.roughness * T * T / 128)), margin=4):
+        _patch(tile, x, y, r[1], r[3], rng)
     for x, y in _interior(rng, T, int(p.pebbles * T * T / 28)):
         tile[y, x] = r[3]
         tile[y + 1, x] = r[0]
@@ -90,12 +137,11 @@ class SandParams(Params):
 @register("sand", "terrain", SandParams, colors=[("sand", "#e2c47e")], doc="Desert or beach sand with wind ripples.")
 def sand(ctx: GenContext, p: SandParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    base = Noise(ctx.rng("base"), T, cells=2, octaves=2)
-    f = contrast(base.tile(), 2.0)
+    f = contrast(_field(ctx, variant, 2), 2.0)
     tile = quantize(f, [r[2], r[3]], dither=1.0)
     ys, xs = np.mgrid[0:T, 0:T]
     wave = (ys + 1.5 * np.sin(2 * np.pi * xs / T) + 0.8 * np.sin(4 * np.pi * xs / T + 1.0)) % (T / 2)
-    gate = Noise(ctx.rng("ripple"), T, cells=2).tile() < 0.2 + p.ripples * 0.4
+    gate = Noise(ctx.rng("ripple"), T, cells=2).tile() + (_field(ctx, variant, 2) - 0.5) * 0.5 < 0.2 + p.ripples * 0.4
     tile[(wave < 1.0) & gate] = r[2]
     tile[(wave >= 1.0) & (wave < 2.0) & gate] = r[4]
     rng = ctx.rng("detail", variant)
@@ -121,6 +167,9 @@ def cobble(ctx: GenContext, p: CobbleParams, variant: int, phase: float) -> np.n
     ids, f1, f2 = voronoi(ctx.rng("base"), T, p.stones)
     mortar = (f2 - f1) < 1.3
     shades = ctx.rng("shade").choice([r[2], r[2], r[3]], size=ids.max() + 1)
+    border = np.unique(np.concatenate([ids[0], ids[-1], ids[:, 0], ids[:, -1]]))
+    redo = np.setdiff1d(np.arange(ids.max() + 1), border)
+    shades[redo] = ctx.rng("shade", variant).choice([r[1], r[2], r[2], r[3]], size=len(redo))
     tile = shades[ids].astype(np.uint8)
     inner = ~mortar
     tile[inner & np.roll(mortar, 1, axis=0)] = r[4]
@@ -212,12 +261,13 @@ class SnowParams(Params):
 @register("snow", "terrain", SnowParams, colors=[("snow", "#dfe8f2")], doc="Snowfield with soft shadowed drifts.")
 def snow(ctx: GenContext, p: SnowParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    f = Noise(ctx.rng("base"), T, cells=2, octaves=2).tile()
-    tile = quantize(contrast(f, 2.0), [r[2], r[3], r[3], r[4]], dither=0.8)
-    tile[f < 0.5 - p.drifts * 0.18] = r[1]
+    f = contrast(_field(ctx, variant, 4, amount=0.5), 1.4)
+    tile = quantize(f, [r[3], r[3], r[4]], dither=0.8)
     rng = ctx.rng("detail", variant)
-    for x, y in _interior(rng, T, T // 4):
-        tile[y, x] = r[1] if rng.random() < 0.5 else r[4]
+    for x, y in _interior(rng, T, max(1, round(p.drifts * T * T / 100)), margin=4):
+        _patch(tile, x, y, r[2], r[4], rng)
+    for x, y in _interior(rng, T, T // 6):
+        tile[y, x] = r[2]
     return tile
 
 
@@ -236,7 +286,7 @@ class WaterParams(Params):
 )
 def water(ctx: GenContext, p: WaterParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    base = Noise(ctx.rng("base"), T, cells=2, octaves=2, tcells=2).tile(t=phase)
+    base = _field(ctx, variant, 2, amount=0.9, t=phase, tcells=2)
     levels = [r[1], r[1], r[2]] if p.depth > 0.6 else [r[2], r[2], r[3]] if p.depth < 0.25 else [r[1], r[2], r[2]]
     tile = quantize(contrast(base, 1.3), levels, dither=1.0)
     crest = Noise(ctx.rng("waves"), T, cells=(2, 5), octaves=2, tcells=2).tile(t=phase, dx=phase * T)
@@ -260,7 +310,7 @@ class LavaParams(Params):
 )
 def lava(ctx: GenContext, p: LavaParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
-    flow = Noise(ctx.rng("base"), T, cells=2, octaves=3, tcells=2).tile(t=phase, dy=-phase * T)
+    flow = _field(ctx, variant, 2, octaves=3, amount=0.4, t=phase, tcells=2, dy=-phase * T, edge_power=3.0)
     ridge = np.abs(contrast(flow, 3.0) - 0.5) * 2.0  # 0 along the veins
     glow = np.clip(1.0 - ridge / (0.2 + (1.0 - p.crust) * 0.5), 0.0, 1.0) ** 0.7
     tile = quantize(glow, [r[0], r[1], r[2], r[3], r[4]], dither=0.7)
@@ -286,7 +336,7 @@ def stone_floor(ctx: GenContext, p: FloorParams, variant: int, phase: float) -> 
     cell = (ys // s) + (xs // s)
     use_alt = (cell % 2 == 1) if p.style == "checker" else np.zeros_like(cell, dtype=bool)
     tile = np.where(use_alt, a[2], r[2]).astype(np.uint8)
-    f = Noise(ctx.rng("base"), T, cells=4).tile()
+    f = _field(ctx, variant, 4, octaves=1)
     tile[(f > 0.62) & ~use_alt] = r[3]
     tile[(f > 0.62) & use_alt] = a[3]
     lx, ly = xs % s, ys % s

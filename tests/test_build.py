@@ -159,3 +159,18 @@ def test_context_rng_is_stable():
     ctx = GenContext(16, 5, "terrain:grass", Palette(), [])
     assert ctx.rng("a", 1).random() == ctx.rng("a", 1).random()
     assert ctx.rng("a", 1).random() != ctx.rng("a", 2).random()
+
+
+@pytest.mark.parametrize("tile_size", [16, 32])
+def test_terrain_variants_share_borders_but_differ_inside(tile_size: int):
+    from tileset_gen.registry import by_kind
+
+    structural = {"brick_floor", "wood_floor"}  # regular patterns; variants only add wear marks
+    for g in by_kind("terrain"):
+        ctx = GenContext(tile_size, 1, "t", Palette(), g.default_colors())
+        a, b = g.fn(ctx, g.params(), 0, 0.0), g.fn(ctx, g.params(), 1, 0.0)
+        edge = np.ones(a.shape, bool)
+        edge[1:-1, 1:-1] = False
+        assert np.mean(a[edge] != b[edge]) <= 0.05, g.name
+        if g.name not in structural:
+            assert np.mean(a[~edge] != b[~edge]) >= 0.04, g.name
