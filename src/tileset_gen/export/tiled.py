@@ -20,11 +20,43 @@ def _wang_color(i: int) -> str:
     return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
-def _wangid(corners: tuple[int, int, int, int]) -> str:
+def _wangid(nw: int, ne: int, se: int, sw: int) -> str:
     # Tiled order: top, top-right, right, bottom-right, bottom, bottom-left, left, top-left.
-    # Colors are 1-based: 1 = lower terrain, 2 = upper terrain.
-    nw, ne, se, sw = (c + 1 for c in corners)
+    # Edge slots are 0 in a corner set; colors are 1-based.
     return f"0,{ne},0,{se},0,{sw},0,{nw}"
+
+
+def _write_wangset(res: BuildResult, root: ET.Element) -> None:
+    """One corner Wang set over every terrain, so Tiled offers a single terrain brush palette.
+
+    Each terrain is a Wang color; each transition contributes its tiles with
+    corners mapped to the two terrains' colors. Pairs without a transition simply
+    have no tiles, and Tiled's brush routes through the pairs that do exist.
+    """
+    terrains = [t.name for t in res.spec.terrains]
+    color = {name: i + 1 for i, name in enumerate(terrains)}
+    sets = ET.SubElement(root, "wangsets")
+    first = res.terrain_tiles[terrains[0]][0]
+    el = ET.SubElement(sets, "wangset", {"name": "terrain", "type": "corner", "tile": str(first)})
+    for i, name in enumerate(terrains):
+        ET.SubElement(
+            el,
+            "wangcolor",
+            {"name": name, "color": _wang_color(i), "tile": str(res.terrain_tiles[name][0]), "probability": "1"},
+        )
+    wangids: dict[int, str] = {}
+    for name in terrains:
+        for tid in res.terrain_tiles[name]:
+            c = color[name]
+            wangids[tid] = _wangid(c, c, c, c)
+    for ws in res.wangsets:
+        lo, up = color[ws.lower], color[ws.upper]
+        for corners, ids in ws.tiles.items():
+            if 0 < sum(corners) < 4:
+                for tid in ids:
+                    wangids[tid] = _wangid(*(up if c else lo for c in corners))
+    for tid in sorted(wangids):
+        ET.SubElement(el, "wangtile", {"tileid": str(tid), "wangid": wangids[tid]})
 
 
 def _write(root: ET.Element, path: Path) -> None:
@@ -66,25 +98,7 @@ def write_tsx(res: BuildResult, out: Path) -> None:
             anim = ET.SubElement(tile, "animation")
             for tid, ms in m.animation:
                 ET.SubElement(anim, "frame", {"tileid": str(tid), "duration": str(ms)})
-    if res.wangsets:
-        sets = ET.SubElement(root, "wangsets")
-        for i, ws in enumerate(res.wangsets):
-            lower_tile = ws.tiles[(0, 0, 0, 0)][0]
-            el = ET.SubElement(sets, "wangset", {"name": ws.name, "type": "corner", "tile": str(lower_tile)})
-            for j, (name, tiles) in enumerate(((ws.lower, ws.tiles[(0, 0, 0, 0)]), (ws.upper, ws.tiles[(1, 1, 1, 1)]))):
-                ET.SubElement(
-                    el,
-                    "wangcolor",
-                    {
-                        "name": name,
-                        "color": _wang_color(2 * i + j),
-                        "tile": str(tiles[0]),
-                        "probability": "1",
-                    },
-                )
-            for corners, ids in sorted(ws.tiles.items()):
-                for tid in ids:
-                    ET.SubElement(el, "wangtile", {"tileid": str(tid), "wangid": _wangid(corners)})
+    _write_wangset(res, root)
     _write(root, out / "tileset.tsx")
 
 

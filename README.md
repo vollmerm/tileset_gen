@@ -25,7 +25,7 @@ Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists eve
 |---|---|
 | `tileset.png` | Tile atlas (16 columns at 16px). Multi-tile objects are packed as rectangles. |
 | `tileset.json` | Engine-neutral metadata: per-tile name/kind/position, palette, wang sets, object groups, animations. |
-| `tileset.tsx` | Tiled tileset with a corner Wang set per transition (terrain brush) and tile animations. |
+| `tileset.tsx` | Tiled tileset with one corner Wang set covering every terrain (a single terrain-brush palette) and tile animations. |
 | `preview.tmx` | Tiled map of the preview (ground + objects layers). |
 | `preview.png` | Rendered preview map. |
 | `spec.json` | The exact spec that was built, so you can rebuild offline. |
@@ -83,6 +83,6 @@ uv run ruff check src tests scripts && uv run ruff format src tests scripts
 
 ## Known limitations (v1)
 
-- Autotiles are 16-tile corner sets. There's no 47-tile blob set, and no multi-terrain Wang set (each pair is its own set in Tiled).
+- Autotiles are 16-tile corner sets per transition; there's no 47-tile blob set. Tiled's brush can only put two terrains next to each other if the spec has a transition for that pair.
 - Terrain variants share their border pixels and differ only inside, so a terrain with one variant still repeats every tile. Use 2–3 variants for natural ground.
 - In the preview map, the longest transition chain sets the elevation bands. Side branches appear as patches inside their host terrain, and terrains with no transitions appear as hard-edged rectangles.

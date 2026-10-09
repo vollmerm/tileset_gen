@@ -39,9 +39,19 @@ def test_example_builds_and_exports(path: Path, tmp_path: Path):
     assert int(tsx.get("tilecount")) == count
     for frame in tsx.iter("frame"):
         assert 0 <= int(frame.get("tileid")) < count
+    wangsets = list(tsx.iter("wangset"))
+    assert len(wangsets) == 1
+    n_colors = len(list(wangsets[0].iter("wangcolor")))
+    assert n_colors == len(spec.terrains)
+    tile_ids = [int(wt.get("tileid")) for wt in tsx.iter("wangtile")]
+    assert len(tile_ids) == len(set(tile_ids))
+    expected = {t for ws in res.wangsets for ids in ws.tiles.values() for t in ids}
+    expected |= {t for ids in res.terrain_tiles.values() for t in ids}
+    assert set(tile_ids) == expected
     for wt in tsx.iter("wangtile"):
-        assert int(wt.get("tileid")) in res.atlas.tiles
-        assert len(wt.get("wangid").split(",")) == 8
+        ids = [int(v) for v in wt.get("wangid").split(",")]
+        assert len(ids) == 8 and ids[0::2] == [0, 0, 0, 0]
+        assert all(1 <= v <= n_colors for v in ids[1::2])
 
     tmx = ET.parse(tmp_path / "preview.tmx").getroot()
     for data in tmx.iter("data"):
