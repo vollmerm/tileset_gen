@@ -8,6 +8,7 @@ import pytest
 
 from tileset_gen import registry
 from tileset_gen.context import GenContext
+from tileset_gen.generators.characters import EMOTES, ROWS, emote_balloon
 from tileset_gen.palette import Palette
 
 registry._load()
@@ -50,10 +51,15 @@ def test_generator_extremes(name: str, params: dict, T: int):
             out = [g.fn(ctx, p, mask) for mask in range(16)] + [g.fn(ctx, p, 2 | 8, gate=True)]
             shape = (T, T)
         elif g.kind == "character":
-            out = [g.fn(ctx, p, d, k) for d in ("down", "left", "up") for k in range(3)]
+            out = [g.fn(ctx, p, a, d, k) for a, d in ROWS if d != "right" for k in range(3)]
             shape = out[0].shape
-            assert shape[1] == T and shape[0] in (T, T * 3 // 2)
+            assert shape[1] == 2 * T and shape[0] in (T * 3 // 2, 2 * T)
             assert all((a > 0).any() for a in out), "every frame draws something"
+            # Nothing important may be cut off at the frame edge: only the outline may touch it.
+            hurt_flash = [r for r, d in ROWS if d != "right"].index("hurt") * 3 + 1
+            for a in out[:hurt_flash] + out[hurt_flash + 1 :]:
+                edge = np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]])
+                assert not (edge > 1).any() or set(edge[edge > 1]) <= {ctx.palette.outline_for(int(v)) for v in edge}
         elif g.kind == "object":
             out = [g.fn(ctx, p, *size)]
             shape = (size[1] * T, size[0] * T)
@@ -65,3 +71,12 @@ def test_generator_extremes(name: str, params: dict, T: int):
             assert arr.max() < len(ctx.palette.colors)
             if g.kind == "terrain":
                 assert arr.min() > 0, "terrain tiles must be fully opaque"
+
+
+@pytest.mark.parametrize("T", (16, 32))
+def test_emote_balloons(T: int):
+    ctx = GenContext(T, 0, "emotes", Palette(), [])
+    for e in EMOTES:
+        frames = [emote_balloon(ctx, e, k) for k in range(3)]
+        assert all(f.shape == (T, T) and (f > 0).any() for f in frames)
+        assert (frames[0] > 0).sum() < (frames[2] > 0).sum(), "the balloon pops in small"

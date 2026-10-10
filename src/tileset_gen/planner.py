@@ -227,7 +227,9 @@ or set `generator` to an animation generator (terrain ""). frames 2-8, frame_ms 
 - characters: 3-5 walking sprites that live in this world, such as a hero, townsfolk or guards suited to the \
 theme, and one or two monsters. Dress them in the tileset's own palette names (a robe in the roof color, armor \
 in the stone color) so they match it; add skin and hair base colors to the palette or give them as hex. \
-Give every character a different silhouette: vary outfit, hair, headgear and cape. Keep outfits in value \
+Give every character a different silhouette: vary outfit, hair, headgear and cape. \
+Arm them for their role (swords and axes for fighters, staffs for mages, spears for guards, none for townsfolk); \
+every character also gets attack and emote animations. Keep outfits in value \
 contrast with the ground they stand on. place_on lists walkable terrains (never water/lava); count (0-4) \
 is how many copies stand in the preview map.
 - params: list of "name=value" strings (e.g. "density=0.4", "clumps=3", "cape=true", "outfit=robe") \

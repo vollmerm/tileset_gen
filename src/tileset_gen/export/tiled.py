@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..build import BuildResult
+from ..generators.characters import EMOTES, FRAMES, ROWS
 
 if TYPE_CHECKING:
     from ..preview import PreviewMap
@@ -136,16 +137,16 @@ def write_tmx(res: BuildResult, pmap: PreviewMap, out: Path) -> None:
             "tileheight": str(T),
             "infinite": "0",
             "nextlayerid": "4" if pmap.characters else "3",
-            "nextobjectid": str(len(pmap.characters) + 1),
+            "nextobjectid": "1",
         },
     )
     ET.SubElement(root, "tileset", {"firstgid": "1", "source": "tileset.tsx"})
     firstgid: dict[str, int] = {}
     gid = res.atlas.tile_count + 1
-    for ch in res.characters:
-        firstgid[ch.name] = gid
-        ET.SubElement(root, "tileset", {"firstgid": str(gid), "source": f"characters/{ch.name}.tsx"})
-        gid += ch.frames.shape[0] * ch.frames.shape[1]
+    for sheet in res.characters + ([res.emotes] if res.emotes else []):
+        firstgid[sheet.name] = gid
+        ET.SubElement(root, "tileset", {"firstgid": str(gid), "source": f"characters/{sheet.name}.tsx"})
+        gid += sheet.frames.shape[0] * sheet.frames.shape[1]
     for lid, (name, grid) in enumerate((("ground", pmap.ground), ("objects", pmap.objects)), 1):
         layer = ET.SubElement(
             root, "layer", {"id": str(lid), "name": name, "width": str(pmap.width), "height": str(pmap.height)}
@@ -154,23 +155,33 @@ def write_tmx(res: BuildResult, pmap: PreviewMap, out: Path) -> None:
         data = ET.SubElement(layer, "data", {"encoding": "csv"})
         data.text = "\n" + ",\n".join(rows) + "\n"
     if pmap.characters:
-        # Tile objects, anchored bottom-center (the character tilesets set objectalignment="bottom").
-        group = ET.SubElement(root, "objectgroup", {"id": "3", "name": "characters"})
-        frames = {ch.name: ch.frames.shape[1] for ch in res.characters}
-        sizes = {ch.name: ch.size for ch in res.characters}
-        for oid, (name, x, y, row) in enumerate(pmap.characters, 1):
-            w, h = sizes[name]
-            ET.SubElement(
-                group,
-                "object",
-                {
-                    "id": str(oid),
-                    "name": name,
-                    "gid": str(firstgid[name] + row * frames[name] + 1),
-                    "x": str(x * T + T / 2),
-                    "y": str((y + 1) * T),
-                    "width": str(w),
-                    "height": str(h),
-                },
-            )
+        _write_characters(res, pmap, root, firstgid)
     _write(root, out / "preview.tmx")
+
+
+def _write_characters(res: BuildResult, pmap: PreviewMap, root: ET.Element, firstgid: dict[str, int]) -> None:
+    """Characters and their emote balloons as tile objects, anchored bottom-center.
+
+    Each object uses the tile that carries its pose's animation, so Tiled plays it.
+    """
+    from .characters import animation_tile
+
+    T = res.atlas.T
+    group = ET.SubElement(root, "objectgroup", {"id": "3", "name": "characters"})
+    sheets = {ch.name: ch for ch in res.characters}
+
+    def add(name: str, gid: int, x: float, y: float, w: int, h: int) -> None:
+        oid = len(group) + 1
+        attrs = {"id": str(oid), "name": name, "gid": str(gid), "x": str(x), "y": str(y)}
+        ET.SubElement(group, "object", {**attrs, "width": str(w), "height": str(h)})
+
+    for c in pmap.characters:
+        sheet = sheets[c.name]
+        w, h = sheet.size
+        action = ROWS[c.row][0]
+        add(c.name, firstgid[c.name] + animation_tile(c.row, action), c.x * T + T / 2, (c.y + 1) * T, w, h)
+        if c.emote >= 0:
+            bw, bh = res.emotes.size
+            top = (c.y + 1) * T - h + sheet.head_top() + 2
+            add(EMOTES[c.emote], firstgid["emotes"] + c.emote * FRAMES, c.x * T + T / 2, top, bw, bh)
+    root.set("nextobjectid", str(len(group) + 1))

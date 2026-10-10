@@ -32,11 +32,12 @@ Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists eve
 | `preview.tmx` | Tiled map of the preview (ground + objects layers). |
 | `preview.png` | Rendered preview map. |
 | `spec.json` | The exact spec that was built, so you can rebuild offline. |
-| `characters/<name>.png` | One sprite sheet per character: rows are directions (down, left, right, up), columns are 3 walk frames (step, stand, step), the RPG Maker layout. Frames are one tile wide and 1 or 1.5 tiles tall. |
-| `characters/<name>.tsx` | Tiled tileset for that sheet. Each direction's standing frame plays the 0-1-2-1 walk cycle, and objects anchor bottom-center. |
-| `characters.json` | Frame size, per-character palette, frame timing and the frame coordinates of each direction's walk cycle. |
+| `characters/<name>.png` | One sprite sheet per character, 3 frames per row. 12 rows: walk down, left, right and up; attack down, left, right and up; then cheer, surprise, sad and hurt. The first 4 rows are the RPG Maker walk layout (step, stand, step). Frames are 2 tiles wide and 1.5 or 2 tiles tall, with the feet at the bottom center. |
+| `characters/<name>.tsx` | Tiled tileset for that sheet, with each row's animation on one tile. Walk animations sit on the standing frame. Objects anchor bottom-center. |
+| `characters/emotes.png`, `.tsx` | Shared emote balloons (exclaim, question, heart, music, anger, sweat, sleep, silence), one tile square, 3 frames each: pop in, bounce, settle. |
+| `characters.json` | For every character: frame size, palette, `head_top` (where a balloon goes) and each animation's frames, frame duration and whether it loops. The same for the emote balloons. |
 
-`preview.tmx` also gets a `characters` object layer and `preview.png` shows them standing around the map.
+`preview.tmx` also gets a `characters` object layer and `preview.png` shows them standing around the map. Some act out an emote: a "!" with the surprise pose, a heart or music note with the cheer pose, "zzz" with a drooped head.
 
 ## Spec format
 
@@ -69,11 +70,24 @@ Landmark generators (house, well, chest, sign, door) have a `limit`: the preview
 
 ### Characters
 
-Character generators draw a 4-direction, 3-frame walk cycle:
+Every character gets these animations, 3 frames each:
 
-- `humanoid` (5 color slots: skin, hair, outfit, accent, legs). `body` is `classic` (16x24 at 16px tiles, like FF6 or Chrono Trigger) or `chibi` (16x16, like Dragon Quest). Pick an `outfit` (tunic, robe, armor, dress), `hair` (short, long, spiky, ponytail, bald) and `headgear` (none, hood, wizard_hat, helmet, bandana, crown), and optionally a `cape` and a `beard`. Together these cover heroes, mages, knights, villagers, kings and so on.
-- `slime`: a Dragon Quest-style teardrop or round blob that squashes and stretches as it moves.
-- `ghost`: a floating sheet that bobs, with a rippling hem and a detached shadow.
+| Animation | Directions | Plays | Frames |
+|---|---|---|---|
+| walk | all 4 | 0-1-2-1, looping | step, stand, step |
+| attack | all 4 | 0-1-2, once, fast | wind-up, strike, follow-through |
+| cheer | facing camera | looping | arms up, a hop, landing |
+| surprise | facing camera | once | a startled jump, then wide eyes |
+| sad | facing camera | slow loop | head down; the last frame has a tear |
+| hurt | facing camera | 0-1-0-1-2, once | recoil, white damage flash, recovery |
+
+Character generators:
+
+- `humanoid` (6 color slots: skin, hair, outfit, accent, legs, weapon). `body` is `classic` (a 16x24 figure at 16px tiles, like FF6 or Chrono Trigger) or `chibi` (16x16, like Dragon Quest). Pick an `outfit` (tunic, robe, armor, dress), `hair` (short, long, spiky, ponytail, bald) and `headgear` (none, hood, wizard_hat, helmet, bandana, crown), and optionally a `cape` and a `beard`. Together these cover heroes, mages, knights, villagers, kings and so on. `weapon` (sword, axe, spear, staff, none) is what they swing when they attack; with none, they punch.
+- `slime`: a Dragon Quest-style teardrop or round blob that squashes and stretches as it moves and lunges to attack.
+- `ghost`: a floating sheet that bobs, with a rippling hem and a detached shadow. It rears up and swoops to attack.
+
+Frames are wider than the figure so weapons have room to swing. A weapon that would still leave the frame (a long spear on a chibi, say) is turned toward horizontal until it fits.
 
 To make characters match a tileset, name its palette colors in `colors` (a robe in the roof color, armor in the stone color). Their ramps, light direction, selective outlines and translucent ground shadow then match the tileset's objects. Each character gets its own palette, reduced to `max_colors` (default 15, the size of a SNES sprite palette; 3 gives an NES look). Characters don't use up the tileset's `max_colors`. "Right" frames are "left" mirrored, as on the SNES. In the preview, `count` copies stand on open `place_on` ground, kept off objects and away from each other.
 
@@ -95,7 +109,7 @@ Register a function in `src/tileset_gen/generators/` with `@register(name, kind,
 - Terrain: `fn(ctx, params, variant, phase) -> uint8[T, T]`
 - Object: `fn(ctx, params, width, height) -> uint8[h*T, w*T]`, with 0 as transparent
 - Animation: `fn(ctx, params, frame, n_frames) -> uint8[T, T]`
-- Character: `fn(ctx, params, direction, frame) -> uint8[h, T]`, where direction is `down`, `left` or `up` and frame is 0-2. Every frame must have the same height. Lay shapes out with `_Figure` in `generators/characters.py`, which works in 16px-sprite units so one design renders at both tile sizes.
+- Character: `fn(ctx, params, action, direction, frame) -> uint8[h, 2*T]`, for each `(action, direction)` in `ROWS` except `right` (the builder mirrors `left`), with frame 0-2. Every frame must have the same size. Lay shapes out with `_Figure` in `generators/characters.py`, which works in 16px-tile units so one design renders at both tile sizes. Describe each frame as a `Pose` (arms, hop, lean, face, weapon angle) rather than special-casing actions in the drawing code. `tests/test_generators.py` checks that nothing but the outline touches the frame edge.
 
 Use `ctx.ramp(slot)` for colors and `ctx.rng(...)` for randomness.
 

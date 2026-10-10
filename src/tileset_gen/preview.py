@@ -11,6 +11,7 @@ from . import registry
 from .atlas import ConnectedSet, ObjectGroup, WangSet
 from .build import BuildResult
 from .context import GenContext
+from .generators.characters import EMOTES, ROWS
 from .noise import Noise
 from .palette import SHADOW
 
@@ -22,7 +23,29 @@ class PreviewMap:
     ground: np.ndarray  # (H, W) tile ids
     objects: np.ndarray  # (H, W) tile ids, -1 = empty
     chain: list[str]
-    characters: list[tuple[str, int, int, int]] = field(default_factory=list)  # (name, x, y, direction row)
+    characters: list[Placed] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Placed:
+    """A character standing on map cell (x, y), showing frame `frame` of sheet row `row`, maybe emoting."""
+
+    name: str
+    x: int
+    y: int
+    row: int
+    frame: int = 1
+    emote: int = -1  # index into EMOTES, or -1 for no balloon
+
+
+# Some characters act out a balloon: the pose (sheet row, frame) that goes with each emote.
+EMOTE_POSES = {
+    "exclaim": (ROWS.index(("surprise", "down")), 1),
+    "heart": (ROWS.index(("cheer", "down")), 0),
+    "music": (ROWS.index(("cheer", "down")), 0),
+    "sleep": (ROWS.index(("sad", "down")), 0),
+}
+EMOTE_CHANCE = 0.35
 
 
 def terrain_chain(res: BuildResult) -> list[str]:
@@ -245,8 +268,8 @@ def make_preview(res: BuildResult, width: int = 24, height: int = 16) -> Preview
                 place(group, *spots[int(rng.integers(len(spots)))])
                 break
 
-    # Characters stand on open ground, a little apart, mostly facing the camera.
-    characters: list[tuple[str, int, int, int]] = []
+    # Characters stand on open ground, a little apart, mostly facing the camera; some emote.
+    characters: list[Placed] = []
     taken: set[tuple[int, int]] = set()
     for ch in spec.characters:
         allowed = allowed_on(ch)
@@ -261,8 +284,13 @@ def make_preview(res: BuildResult, width: int = 24, height: int = 16) -> Preview
             if any((x + i, y + j) in taken for i in (-1, 0, 1) for j in (-1, 0, 1)):
                 continue
             taken.add((x, y))
-            characters.append((ch.name, x, y, int(rng.choice(4, p=[0.55, 0.15, 0.15, 0.15]))))
-    characters.sort(key=lambda c: (c[2], c[1]))
+            placed = Placed(ch.name, x, y, int(rng.choice(4, p=[0.55, 0.15, 0.15, 0.15])))
+            if rng.random() < EMOTE_CHANCE:
+                emote = int(rng.integers(len(EMOTES)))
+                row, frame = EMOTE_POSES.get(EMOTES[emote], (0, 1))  # otherwise stand facing the camera
+                placed = Placed(ch.name, x, y, row, frame, emote)
+            characters.append(placed)
+    characters.sort(key=lambda c: (c.y, c.x))
     return PreviewMap(width, height, ground, objects, terrain_chain(res), characters)
 
 
@@ -285,24 +313,38 @@ def render_preview(res: BuildResult, pmap: PreviewMap, scale: int = 3) -> Image.
     # Characters have their own palettes: cast their shadows in index space, then paint them over the RGBA map.
     sheets = {c.name: c for c in res.characters}
     sprites = []
-    for name, x, y, row in pmap.characters:
-        sheet = sheets[name]
-        sprite = sheet.frames[row, 1]
+    for c in pmap.characters:
+        sheet = sheets[c.name]
+        sprite = sheet.frames[c.row, c.frame]
         h, w = sprite.shape
-        x0, y0 = x * T + (T - w) // 2, (y + 1) * T - h
-        cut = max(0, -y0)
-        sprite, y0 = sprite[cut:], y0 + cut
-        region = img[y0 : y0 + sprite.shape[0], x0 : x0 + w]
-        shadow = sprite == SHADOW
-        region[shadow] = darker[region[shadow]]
+        x0, y0 = c.x * T + (T - w) // 2, (c.y + 1) * T - h
         sprites.append((sheet, sprite, x0, y0))
+        if c.emote >= 0:
+            balloon = res.emotes.frames[c.emote, -1]
+            bh, bw = balloon.shape
+            sprites.append((res.emotes, balloon, c.x * T + (T - bw) // 2, y0 + sheet.head_top() - bh + 2))
+    for _, sprite, x0, y0 in sprites:
+        region, part = _clip(img, sprite, x0, y0)
+        shadow = part == SHADOW
+        region[shadow] = darker[region[shadow]]
     rgba = res.to_rgba(img)
     for sheet, sprite, x0, y0 in sprites:
-        region = rgba[y0 : y0 + sprite.shape[0], x0 : x0 + sprite.shape[1]]
-        solid = (sprite > 0) & (sprite != SHADOW)
-        region[solid] = sheet.to_rgba(sprite)[solid]
+        region, part = _clip(rgba, sprite, x0, y0)
+        solid = (part > 0) & (part != SHADOW)
+        region[solid] = sheet.to_rgba(part)[solid]
     out = Image.fromarray(rgba, "RGBA")
     return out.resize((out.width * scale, out.height * scale), Image.NEAREST)
+
+
+def _clip(canvas: np.ndarray, sprite: np.ndarray, x0: int, y0: int) -> tuple[np.ndarray, np.ndarray]:
+    """The view of `canvas` under a sprite placed at (x0, y0), and the part of the sprite that lands on it."""
+    H, W = canvas.shape[:2]
+    h, w = sprite.shape
+    cy0, cx0 = max(y0, 0), max(x0, 0)
+    cy1, cx1 = min(y0 + h, H), min(x0 + w, W)
+    if cy1 <= cy0 or cx1 <= cx0:
+        return canvas[0:0, 0:0], sprite[0:0, 0:0]
+    return canvas[cy0:cy1, cx0:cx1], sprite[cy0 - y0 : cy1 - y0, cx0 - x0 : cx1 - x0]
 
 
 def _fence_rectangle(

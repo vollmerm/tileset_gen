@@ -45,8 +45,8 @@
   ],
   "characters": [
     {"name": "hero", "generator": "humanoid", "colors": ["#f0c49a", "#7a4a2a", "water", "gold", "bark"], "params": {"hair": "spiky", "headgear": "bandana", "cape": true}, "place_on": ["dirt", "grass"]},
-    {"name": "mage", "generator": "humanoid", "colors": ["#f0c49a", "#e8e0d0", "roof", "gold", "bark"], "params": {"outfit": "robe", "headgear": "wizard_hat", "hair": "long", "beard": true}, "place_on": ["grass"]},
-    {"name": "villager", "generator": "humanoid", "colors": ["#e0b088", "#b05a30", "petal", "plaster", "soil"], "params": {"outfit": "dress", "hair": "ponytail"}, "place_on": ["dirt", "grass"], "count": 2},
+    {"name": "mage", "generator": "humanoid", "colors": ["#f0c49a", "#e8e0d0", "roof", "gold", "bark"], "params": {"outfit": "robe", "headgear": "wizard_hat", "hair": "long", "beard": true, "weapon": "staff"}, "place_on": ["grass"]},
+    {"name": "villager", "generator": "humanoid", "colors": ["#e0b088", "#b05a30", "petal", "plaster", "soil"], "params": {"outfit": "dress", "hair": "ponytail", "weapon": "none"}, "place_on": ["dirt", "grass"], "count": 2},
     {"name": "slime", "generator": "slime", "colors": ["water", "roof"], "place_on": ["grass"], "count": 2}
   ]
 }

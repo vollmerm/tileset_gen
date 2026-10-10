@@ -361,29 +361,49 @@ def test_landmarks_are_capped_in_the_preview():
 
 
 def test_characters_export_sheets_tilesets_and_map_objects(tmp_path: Path):
+    from tileset_gen.generators.characters import ACTIONS, EMOTES, ROWS
+
     spec = load("grassland")
     res = build(spec, tmp_path, map_size=(16, 12), preview_scale=1)
+    T = spec.tile_size
     assert [c.name for c in res.characters] == [c.name for c in spec.characters]
     meta = json.loads((tmp_path / "characters.json").read_text())
+    n_tiles = len(ROWS) * 3
     for ch, doc in zip(res.characters, meta["characters"]):
         w, h = ch.size
-        assert w == spec.tile_size and h in (spec.tile_size, spec.tile_size * 3 // 2)
+        assert w == 2 * T and h in (T * 3 // 2, 2 * T)
         img = np.asarray(Image.open(tmp_path / doc["image"]).convert("RGBA"))
-        assert img.shape == (4 * h, 3 * w, 4)
+        assert img.shape == (len(ROWS) * h, 3 * w, 4)
         opaque = {tuple(px[:3]) for px in img.reshape(-1, 4) if px[3] == 255}
         assert len(opaque) <= next(c for c in spec.characters if c.name == ch.name).max_colors
         assert ((img[..., 3] > 0) & (img[..., 3] < 255)).any(), "a translucent ground shadow"
-        # "right" is "left" mirrored.
-        assert np.array_equal(ch.frames[2], ch.frames[1][:, :, ::-1])
+        # "right" rows are "left" rows mirrored.
+        for action in ("walk", "attack"):
+            left, right = ROWS.index((action, "left")), ROWS.index((action, "right"))
+            assert np.array_equal(ch.frames[right], ch.frames[left][:, :, ::-1])
+        # Every animation in the json points at frames inside the sheet, with the action's timing.
+        assert set(doc["animations"]) >= {"walk_down", "attack_up", "cheer", "surprise", "sad", "hurt"}
+        for name, anim in doc["animations"].items():
+            assert all(0 <= col < 3 and 0 <= row < len(ROWS) for col, row in anim["frames"])
+            action = name.split("_")[0]
+            assert anim["ms"] == round(ch.frame_ms * ACTIONS[action].speed)
+        assert 0 < doc["head_top"] < h // 2
         tsx = ET.parse(tmp_path / "characters" / f"{ch.name}.tsx").getroot()
-        assert tsx.get("tilecount") == "12" and tsx.get("objectalignment") == "bottom"
-        assert len(list(tsx.iter("animation"))) == 4
+        assert tsx.get("tilecount") == str(n_tiles) and tsx.get("objectalignment") == "bottom"
+        assert len(list(tsx.iter("animation"))) == len(ROWS)
+        for frame in tsx.iter("frame"):
+            assert 0 <= int(frame.get("tileid")) < n_tiles
+    emotes = np.asarray(Image.open(tmp_path / "characters" / "emotes.png").convert("RGBA"))
+    assert emotes.shape == (len(EMOTES) * T, 3 * T, 4)
+    assert set(meta["emotes"]["animations"]) == set(EMOTES)
     tmx = ET.parse(tmp_path / "preview.tmx").getroot()
     tilesets = [(int(t.get("firstgid")), t.get("source")) for t in tmx.iter("tileset")]
-    assert tilesets[0] == (1, "tileset.tsx") and len(tilesets) == 1 + len(res.characters)
+    assert tilesets[0] == (1, "tileset.tsx") and len(tilesets) == 2 + len(res.characters)
+    assert tilesets[-1][1] == "characters/emotes.tsx"
     objs = list(tmx.iter("object"))
-    assert objs and len(objs) <= sum(c.count for c in spec.characters)
-    last = tilesets[-1][0] + 12
+    assert objs and len({o.get("id") for o in objs}) == len(objs)
+    assert int(tmx.get("nextobjectid")) == len(objs) + 1
+    last = tilesets[-1][0] + len(EMOTES) * 3
     for o in objs:
         assert res.atlas.tile_count < int(o.get("gid")) < last
 
@@ -395,12 +415,30 @@ def test_characters_stay_off_water_and_objects(tmp_path: Path):
     pmap = make_preview(res, 24, 16)
     names = {t.name for t in res.spec.terrains}
     allowed = {c.name: set(c.place_on) for c in res.spec.characters}
-    for name, x, y, row in pmap.characters:
-        assert pmap.objects[y, x] < 0 and 0 <= row < 4
-        tid = int(pmap.ground[y, x])
+    for c in pmap.characters:
+        assert pmap.objects[c.y, c.x] < 0
+        tid = int(pmap.ground[c.y, c.x])
         assert res.atlas.meta[tid].props.get("terrain") in names
         host = res.patch_of.get(res.atlas.meta[tid].props["terrain"], res.atlas.meta[tid].props["terrain"])
-        assert host in allowed[name]
+        assert host in allowed[c.name]
+
+
+def test_preview_characters_act_out_their_emotes():
+    from tileset_gen.generators.characters import EMOTES, ROWS
+    from tileset_gen.preview import EMOTE_POSES, make_preview
+
+    spec = load("grassland")
+    placed = []
+    for seed in range(8):
+        spec.seed = seed
+        placed += make_preview(generate(spec), 24, 16).characters
+    emoting = [c for c in placed if c.emote >= 0]
+    assert emoting and len(emoting) < len(placed)
+    for c in placed:
+        if c.emote < 0:
+            assert ROWS[c.row][0] == "walk" and c.frame == 1
+        else:
+            assert (c.row, c.frame) == EMOTE_POSES.get(EMOTES[c.emote], (0, 1))
 
 
 def test_character_validation():

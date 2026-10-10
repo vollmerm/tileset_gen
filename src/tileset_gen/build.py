@@ -12,7 +12,7 @@ from . import registry
 from .atlas import Atlas, ConnectedSet, ObjectGroup, WangSet
 from .context import GenContext
 from .generators.autotile import MIXED_CORNERS, compose, corner_mask
-from .generators.characters import DIRECTIONS, FRAMES
+from .generators.characters import EMOTES, FRAMES, ROWS, emote_balloon
 from .generators.objects import E, W
 from .generators.terrain import decorate
 from .noise import Noise
@@ -63,16 +63,22 @@ def with_patches(spec: TilesetSpec) -> tuple[TilesetSpec, dict[str, str]]:
     return out, patch_of
 
 
+EMOTE_COLORS = 32
+EMOTE_MS = 120
+
+
 @dataclass
 class CharacterSheet:
-    """A walking sprite: frames[direction][frame] in `DIRECTIONS` order, each (h, w) palette indices.
+    """A sprite sheet: frames[row][frame], each (h, w) palette indices.
 
-    Each character gets its own reduced palette (`max_colors`, like a SNES sprite
-    palette) instead of sharing the tileset's budget.
+    For characters the rows are `ROWS` (walk and attack per direction, then the
+    emotes); for the shared emote balloons they are `EMOTES`. Each sheet gets its
+    own reduced palette (`max_colors`, like a SNES sprite palette) instead of
+    sharing the tileset's budget.
     """
 
     name: str
-    frames: np.ndarray  # (4, FRAMES, h, w)
+    frames: np.ndarray  # (rows, FRAMES, h, w)
     frame_ms: int
     remap: np.ndarray | None = None
     lut: np.ndarray | None = None
@@ -83,11 +89,21 @@ class CharacterSheet:
         return self.frames.shape[3], self.frames.shape[2]
 
     def sheet(self) -> np.ndarray:
-        """Rows are directions, columns walk frames (the RPG Maker layout)."""
+        """One row per animation row, one column per frame."""
         return np.concatenate([np.concatenate(list(row), axis=1) for row in self.frames], axis=0)
 
     def to_rgba(self, indices: np.ndarray) -> np.ndarray:
         return self.lut[self.remap[indices]]
+
+    def reduce_palette(self, palette: Palette, max_colors: int) -> None:
+        counts = np.bincount(self.frames.ravel(), minlength=len(palette.colors))
+        self.remap = palette.reduce(counts, max_colors)
+        self.lut = palette.rgba_lut(self.remap)
+
+    def head_top(self) -> int:
+        """First row of the standing front frame with a solid pixel: where an emote balloon sits."""
+        solid = (self.frames[0, 1] > 0) & (self.frames[0, 1] != SHADOW)
+        return int(np.argmax(solid.any(axis=1)))
 
 
 class SpecError(ValueError):
@@ -108,6 +124,7 @@ class BuildResult:
     connected: list[ConnectedSet] = field(default_factory=list)
     animations: dict[str, int] = field(default_factory=dict)  # standalone animation -> first tile id
     characters: list[CharacterSheet] = field(default_factory=list)
+    emotes: CharacterSheet | None = None  # shared emote balloons, when there are characters
     remap: np.ndarray | None = None
     lut: np.ndarray | None = None
 
@@ -126,6 +143,16 @@ class BuildResult:
 
     def to_rgba(self, indices: np.ndarray) -> np.ndarray:
         return self.lut[self.remap[indices]]
+
+    def reduce_palette(self, palette: Palette, max_colors: int) -> None:
+        counts = np.bincount(self.frames.ravel(), minlength=len(palette.colors))
+        self.remap = palette.reduce(counts, max_colors)
+        self.lut = palette.rgba_lut(self.remap)
+
+    def head_top(self) -> int:
+        """First row of the standing front frame with a solid pixel: where an emote balloon sits."""
+        solid = (self.frames[0, 1] > 0) & (self.frames[0, 1] != SHADOW)
+        return int(np.argmax(solid.any(axis=1)))
 
     def probability(self, tid: int) -> float:
         """Relative chance of picking this tile among its terrain's tiles (decor tiles are rare)."""
@@ -260,13 +287,20 @@ def generate(spec: TilesetSpec) -> BuildResult:
         info = registry.get(ch.generator)
         p = info.params.model_validate(ch.params)
         ctx = ctx_for(f"character:{ch.name}", ch.colors, info)
-        drawn = {d: [info.fn(ctx, p, d, k) for k in range(FRAMES)] for d in ("down", "left", "up")}
-        drawn["right"] = [np.fliplr(f) for f in drawn["left"]]  # mirrored, as on the SNES
-        sheet = CharacterSheet(ch.name, np.stack([np.stack(drawn[d]) for d in DIRECTIONS]), ch.frame_ms)
-        counts = np.bincount(sheet.frames.ravel(), minlength=len(palette.colors))
-        sheet.remap = palette.reduce(counts, ch.max_colors)
-        sheet.lut = palette.rgba_lut(sheet.remap)
+        drawn = {
+            (action, d): [info.fn(ctx, p, action, d, k) for k in range(FRAMES)] for action, d in ROWS if d != "right"
+        }
+        for action, d in ROWS:
+            if d == "right":  # mirrored, as on the SNES
+                drawn[action, d] = [np.fliplr(f) for f in drawn[action, "left"]]
+        sheet = CharacterSheet(ch.name, np.stack([np.stack(drawn[row]) for row in ROWS]), ch.frame_ms)
+        sheet.reduce_palette(palette, ch.max_colors)
         res.characters.append(sheet)
+    if spec.characters:
+        ctx = GenContext(T, spec.seed, "emotes", palette, [])
+        balloons = np.stack([np.stack([emote_balloon(ctx, e, k) for k in range(FRAMES)]) for e in EMOTES])
+        res.emotes = CharacterSheet("emotes", balloons, EMOTE_MS)
+        res.emotes.reduce_palette(palette, EMOTE_COLORS)
 
     res.finalize_palette()
     return res

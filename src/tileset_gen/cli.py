@@ -48,6 +48,7 @@ def _do_build(spec: TilesetSpec, out: Path, map_size: str, scale: int) -> None:
         typer.echo(f"  {out / 'characters.json'}")
         for ch in res.characters:
             typer.echo(f"  {out / 'characters' / ch.name}.png ({len(ch.lut) - 1} colors)")
+        typer.echo(f"  {out / 'characters' / 'emotes'}.png")
 
 
 def _do_plan(prompt: str, seed: int | None, tile_size: int) -> TilesetSpec:
