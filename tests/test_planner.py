@@ -109,6 +109,15 @@ def test_plan_returns_valid_spec():
     assert call["output_format"] is WireSpec
 
 
+def test_plan_in_a_retro_style():
+    client = fake_client(GOOD)
+    spec = plan("a sunny meadow", style="nes", client=client)
+    assert spec.style == "nes" and spec.max_colors == 16
+    assert all(c.max_colors == 3 for c in spec.characters)
+    assert "NES hardware palette" in client.messages.calls[0]["system"]
+    assert "NES" not in system_prompt()
+
+
 def test_plan_retries_once_with_errors():
     client = fake_client(bad_spec(), GOOD)
     spec = plan("meadow", client=client)

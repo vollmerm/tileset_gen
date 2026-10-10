@@ -16,17 +16,22 @@ uv run tileset-gen build examples/specs/grassland.json -o out/grassland
 uv run tileset-gen generate "snowy mountain village" -o out/snow
 uv run tileset-gen plan "haunted swamp" -o swamp.json   # spec only; edit it, then `build`
 
+# 8-bit looks: NES (Dragon Quest, Final Fantasy, Mother) or Game Boy Color
+uv run tileset-gen build examples/specs/nes_kingdom.json -o out/kingdom
+uv run tileset-gen build examples/specs/grassland.json --style gbc -o out/grassland_gbc
+uv run tileset-gen generate "haunted swamp" --style nes -o out/swamp_nes
+
 # Edit an existing spec in plain language; prints a diff, keeps swamp.json.bak
 uv run tileset-gen refine swamp.json "add a graveyard and make the water murkier" --build out/swamp
 ```
 
-Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists every generator, its color slots and params). Build options: `--seed`, `--map-size 24x16`, `--preview-scale 3`. Plan options: `--seed`, `--tile-size 16|32`.
+Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists every generator, its color slots and params). Build options: `--seed`, `--map-size 24x16`, `--preview-scale 3`, `--style snes|nes|gbc`. Plan options: `--seed`, `--tile-size 16|32`, `--style`.
 
 ## Output
 
 | File | Contents |
 |---|---|
-| `tileset.png` | Tile atlas (16 columns at 16px). Multi-tile objects are packed as rectangles. Object shadows are semi-transparent pixels. |
+| `tileset.png` | Tile atlas (16 columns at 16px). Multi-tile objects are packed as rectangles. Object shadows are semi-transparent pixels (`snes` style only). |
 | `tileset.json` | Engine-neutral metadata: per-tile name/kind/position, palette, wang sets, object groups, animations. Decor tiles carry `props.decor` and `props.probability`. `connected` lists each fence's tiles by neighbor mask (N=1, E=2, S=4, W=8), plus its gate. |
 | `tileset.tsx` | Tiled tileset with one corner Wang set covering every terrain, including tone patches (a single terrain-brush palette), and tile animations. Each fence gets an edge Wang set, so the Wang brush draws fences that join up; place the gate by hand. Decor tiles have a tile `probability`, so the terrain brush scatters them rarely. |
 | `preview.tmx` | Tiled map of the preview (ground + objects layers). |
@@ -45,7 +50,7 @@ See `examples/specs/` for complete specs. The outline:
 
 ```jsonc
 {
-  "name": "grassland", "seed": 7, "tile_size": 16, "max_colors": 48,
+  "name": "grassland", "seed": 7, "tile_size": 16, "style": "snes", "max_colors": 48,   // style: snes | nes | gbc
   "palette": [{"name": "grass", "hex": "#5aa83c"}, ...],        // base colors; ramps are derived
   "terrains": [{"name": "grass", "generator": "grass", "colors": ["grass"], "variants": 3, "decor": 3, "patches": 0.3,
                 "params": {"density": 0.5}}, ...],
@@ -89,11 +94,37 @@ Character generators:
 
 Frames are wider than the figure so weapons have room to swing. A weapon that would still leave the frame (a long spear on a chibi, say) is turned toward horizontal until it fits.
 
-To make characters match a tileset, name its palette colors in `colors` (a robe in the roof color, armor in the stone color). Their ramps, light direction, selective outlines and translucent ground shadow then match the tileset's objects. Each character gets its own palette, reduced to `max_colors` (default 15, the size of a SNES sprite palette; 3 gives an NES look). Characters don't use up the tileset's `max_colors`. "Right" frames are "left" mirrored, as on the SNES. In the preview, `count` copies stand on open `place_on` ground, kept off objects and away from each other.
+To make characters match a tileset, name its palette colors in `colors` (a robe in the roof color, armor in the stone color). Their ramps, light direction, selective outlines and translucent ground shadow then match the tileset's objects. Each character gets its own palette, reduced to `max_colors` (default 15, the size of a SNES sprite palette; 3 in the 8-bit styles). Characters don't use up the tileset's `max_colors`. "Right" frames are "left" mirrored, as on the SNES. In the preview, `count` copies stand on open `place_on` ground, kept off objects and away from each other.
+
+### Styles
+
+`style` picks the console the tileset imitates. The same generators draw every style. The style changes the colors they get and how sprites are inked.
+
+| | `snes` (default) | `nes` | `gbc` |
+|---|---|---|---|
+| Looks like | FF6, Chrono Trigger | Dragon Quest, Final Fantasy, Mother | Zelda: Oracle, Pokémon Gold |
+| Colors | any RGB | snapped to the NES hardware palette | 15-bit (5 bits per channel) |
+| Shades per base color | 5, hue-shifted | 3 (dark, base, light) | 4 |
+| Outlines | selective (darkest shade of each ramp) | black | near-black |
+| Cast shadows | translucent | none | none |
+| Dithering | full | none (flat fills) | light |
+| Default `max_colors` | 48 | 16 | 32 |
+| Default sprite `max_colors` | 15 | 3 (black, skin, outfit) | 3 |
+
+Generators index 5-step ramps. The 8-bit styles fill those 5 steps with repeated shades (`nes` uses dark, dark, base, base, light). The step-2-vs-3 noise that most textures are built from turns into flat fills, while shadows and highlights stay. This is why 8-bit tiles look simpler at the same 16px size, which matches the real hardware: NES and Game Boy maps were also built from 16x16 metatiles.
+
+With 3 colors per sprite, the reducer keeps each generator's key color slots (skin and outfit for `humanoid`, the body for monsters) plus black. Every other color maps to the nearest of those. So for 8-bit specs:
+
+- Give characters outfits far from skin tones, and dark hair if it should read as hair. Mid-brown hair on a pale face turns into skin.
+- Use `body: chibi` for a Dragon Quest look.
+- Choose a few bold, clearly different base colors. Near-duplicates collapse into one hardware color.
+
+`examples/specs/nes_kingdom.json` follows these rules. `--style` on `build` restyles any spec and resets its color budgets to the new style's defaults, so `--style nes` on a SNES spec still gives 16 colors. A `max_colors` written in the spec file wins over the style default. With `--style`, `plan` and `generate` tell the planner about the style's limits.
 
 ## How it works
 
-- **Index-space rendering.** Generators draw palette indices, not RGB. Each base color expands into a 5-step ramp whose shadows shift toward blue and highlights toward yellow. Before export, the palette is merged down to `max_colors`: the closest pair of rarely used colors is merged first, with distance measured in CIELAB so that merges follow what the eye sees.
+- **Index-space rendering.** Generators draw palette indices, not RGB. Each base color expands into a 5-step ramp whose shadows shift toward blue and highlights toward yellow. Before export, the palette is merged down to `max_colors`: the closest pair of colors is merged first, with distance measured in CIELAB so that merges follow what the eye sees. The 8-bit styles weight that distance by the pixel count of the rarer color, never merge their ink or a sprite's key colors, and finally send each merged color to its nearest survivor.
+- **Console colors.** `style.py` builds 8-bit ramps by snapping a high-contrast ramp to the console. The NES snaps to the nearest hardware color while keeping each shade at least 12 L* away from its neighbor. The GBC rounds each channel to 5 bits.
 - **Seamless terrain.** Every variant has the same 1px border ring, taken from a shared tile-periodic field. Inside, the field fades to the variant's own noise within a few pixels. The shared border uses finer, lower-contrast noise than the interior so the tile grid doesn't show. Small details near the edge (tufts, pebbles) come from a shared random stream and wrap across the border. Details further in belong to the variant. Any two variants meet without a seam but look different inside.
 - **Tone patches.** Variants can only differ inside one tile, so on their own they can't make variation bigger than a tile. Patches add that larger scale: they are a darker terrain joined to the host by blend autotiles, placed with low-frequency noise.
 - **Decor tiles.** A decor tile is a copy of a variant with one feature drawn inside a 2px margin, so its border matches. The builder adds `decor` of them per terrain at low probability, both in Tiled and in the preview.
@@ -111,7 +142,7 @@ Register a function in `src/tileset_gen/generators/` with `@register(name, kind,
 - Animation: `fn(ctx, params, frame, n_frames) -> uint8[T, T]`
 - Character: `fn(ctx, params, action, direction, frame) -> uint8[h, 2*T]`, for each `(action, direction)` in `ROWS` except `right` (the builder mirrors `left`), with frame 0-2. Every frame must have the same size. Lay shapes out with `_Figure` in `generators/characters.py`, which works in 16px-tile units so one design renders at both tile sizes. Describe each frame as a `Pose` (arms, hop, lean, face, weapon angle) rather than special-casing actions in the drawing code. `tests/test_generators.py` checks that nothing but the outline touches the frame edge.
 
-Use `ctx.ramp(slot)` for colors and `ctx.rng(...)` for randomness.
+Use `ctx.ramp(slot)` for colors and `ctx.rng(...)` for randomness. Pass ordered-dither strengths through `ctx.dither(amount)` so the 8-bit styles can flatten them. Characters should pass `key_colors=(slot, ...)` to `register`: the color slots a 3-color sprite palette must keep.
 
 Terrains can pass `decor=(feature, ...)` to `register`. A feature is `fn(tile, ctx, params, rng)` that draws into the tile in place, staying 2px inside the edge. Pass `connected=True` for objects that link up tile by tile. Their signature is `fn(ctx, params, mask, gate=False) -> uint8[T, T]`. Objects should call `outline` and then `ground_shadow`/`drop_shadow` (from `draw.py`), so the shadow doesn't get an outline of its own.
 
@@ -130,6 +161,7 @@ uv run ruff check src tests scripts && uv run ruff format src tests scripts
 
 ## Known limitations (v1)
 
+- The `nes` style limits the whole tileset to NES hardware colors and 16 colors in total. It does not enforce the NES attribute rule (one 3-color sub-palette per 16x16 area), so a transition tile can mix the shades of two terrains.
 - Autotiles are 16-tile corner sets per transition; there's no 47-tile blob set. Tiled's brush can only put two terrains next to each other if the spec has a transition for that pair.
 - Terrain variants share their border pixels and differ only inside, so a terrain with one variant still repeats every tile. Use 2–3 variants for natural ground.
 - Transition tiles are built from each terrain's first variant only, and there is one tile per corner combination. Long, thin strips made of transitions repeat more than solid areas do.

@@ -25,6 +25,7 @@ from .spec import (
     TilesetSpec,
     TransitionSpec,
 )
+from .style import StyleName
 from .validate import validate_spec
 
 MODEL = "claude-haiku-5-5"
@@ -153,13 +154,15 @@ class WireSpec(BaseModel):
             }
         )
 
-    def to_spec(self, seed: int, tile_size: int, max_colors: int) -> TilesetSpec:
+    def to_spec(self, seed: int, tile_size: int, max_colors: int | None, style: StyleName = "snes") -> TilesetSpec:
+        budget = {} if max_colors is None else {"max_colors": max_colors}  # unset: the style's default
         return TilesetSpec(
             name=self.name,
             theme=self.theme,
             seed=seed,
             tile_size=tile_size,
-            max_colors=max_colors,
+            style=style,
+            **budget,
             palette=self.palette,
             terrains=[
                 TerrainSpec(**t.model_dump(exclude={"params"}), params=parse_params(t.params)) for t in self.terrains
@@ -237,12 +240,39 @@ using only the params listed for that generator, within their ranges \
 (for a|b|c params use one of the listed values). Use an empty list to accept the defaults.
 - Names are lowercase snake_case and unique across terrains, objects, animations and characters.
 
-# Generators
+{style}# Generators
 {catalog}"""
 
+STYLE_NOTES = {
+    "snes": "",
+    "nes": """\
+# Style: 8-bit NES (overrides the art direction above)
+This tileset renders like an NES game (Dragon Quest, Final Fantasy, Mother). Every color snaps to the NES \
+hardware palette and gets only three shades (dark, base, light); sprites and objects are outlined in black; \
+there are no cast shadows. The whole tileset has 16 colors and each character only 3: black, skin and outfit.
+- Pick 6-9 bold, saturated base colors with clearly different hues and values. Near-duplicate colors merge \
+into one, so give each terrain its own hue family (blue water, green grass, tan sand, gray stone).
+- Characters: body=chibi (16x16, like Dragon Quest) suits this style best; classic (16x24) gives a Mother-like \
+look. Hair, accents and legs fall back to black or skin, so make roles readable from outfit color and \
+silhouette (headgear, cape, weapon). Keep outfits far from skin tones.
+- Favor fewer, simpler elements: 3-4 terrains, 4-7 objects.
 
-def system_prompt() -> str:
-    return SYSTEM_TEMPLATE.format(catalog=registry.describe_for_prompt())
+""",
+    "gbc": """\
+# Style: Game Boy Color (overrides the art direction above)
+This tileset renders like a Game Boy Color game (Zelda: Oracle of Ages, Pokemon Gold). Colors are 15-bit, \
+each base color gets four shades, sprites and objects are outlined in near-black, and there are no cast \
+shadows. The tileset has 32 colors and each character only 3: near-black, skin and outfit.
+- Pick 6-10 clear, fairly saturated base colors; give each terrain its own hue family.
+- Characters: body=chibi (16x16) suits this style best. Hair, accents and legs fall back to the ink or skin \
+color, so make roles readable from outfit color and silhouette (headgear, cape, weapon).
+
+""",
+}
+
+
+def system_prompt(style: StyleName = "snes") -> str:
+    return SYSTEM_TEMPLATE.format(style=STYLE_NOTES[style], catalog=registry.describe_for_prompt())
 
 
 def _assistant_content(response) -> list[dict]:
@@ -260,7 +290,8 @@ def _run_planner(
     *,
     seed: int,
     tile_size: int,
-    max_colors: int,
+    max_colors: int | None,
+    style: StyleName,
     client: anthropic.Anthropic | None,
     retries: int,
     stats: PlanStats | None,
@@ -273,7 +304,7 @@ def _run_planner(
         response = client.messages.parse(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=system_prompt(),
+            system=system_prompt(style),
             messages=messages,
             output_format=WireSpec,
             output_config={"effort": "low"},
@@ -288,7 +319,7 @@ def _run_planner(
             raise PlannerError("the planner response was cut off (max_tokens)")
         wire = response.parsed_output
         try:
-            spec = wire.to_spec(seed, tile_size, max_colors)
+            spec = wire.to_spec(seed, tile_size, max_colors, style)
             errors = validate_spec(spec)
         except ValidationError as e:
             errors = [f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()]
@@ -313,15 +344,23 @@ def plan(
     *,
     seed: int = 0,
     tile_size: int = 16,
-    max_colors: int = 48,
+    style: StyleName = "snes",
+    max_colors: int | None = None,
     client: anthropic.Anthropic | None = None,
     retries: int = 1,
     stats: PlanStats | None = None,
 ) -> TilesetSpec:
-    """Plan a new spec from a theme."""
+    """Plan a new spec from a theme. `max_colors` defaults to the style's budget."""
     messages: list[dict] = [{"role": "user", "content": f"Plan a tileset for this theme: {prompt}"}]
     return _run_planner(
-        messages, seed=seed, tile_size=tile_size, max_colors=max_colors, client=client, retries=retries, stats=stats
+        messages,
+        seed=seed,
+        tile_size=tile_size,
+        max_colors=max_colors,
+        style=style,
+        client=client,
+        retries=retries,
+        stats=stats,
     )
 
 
@@ -346,7 +385,7 @@ def refine(
 ) -> TilesetSpec:
     """Edit an existing spec according to a natural-language instruction.
 
-    Seed, tile size and color limit are carried over; the model never sees them.
+    Seed, tile size, style and color limit are carried over; the model never sees them.
     """
     wire = WireSpec.from_spec(spec).model_dump_json(indent=1)
     messages: list[dict] = [{"role": "user", "content": REFINE_TEMPLATE.format(spec=wire, instruction=instruction)}]
@@ -355,6 +394,7 @@ def refine(
         seed=spec.seed,
         tile_size=spec.tile_size,
         max_colors=spec.max_colors,
+        style=spec.style,
         client=client,
         retries=retries,
         stats=stats,

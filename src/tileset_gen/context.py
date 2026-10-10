@@ -24,6 +24,10 @@ class GenContext:
         digest = hashlib.blake2b(repr((self.seed, self.key, parts)).encode(), digest_size=8).digest()
         return np.random.default_rng(int.from_bytes(digest, "little"))
 
+    def dither(self, amount: float) -> float:
+        """Scale a generator's ordered-dither strength to the style: 8-bit art mostly used flat fills."""
+        return amount * self.palette.style.dither
+
     def ramp(self, slot: int = 0, steps: int = 5) -> list[int]:
         r = self.palette.ramp(self.colors[slot], steps)
         if slot == 0 and self.tone:

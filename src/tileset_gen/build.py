@@ -63,7 +63,6 @@ def with_patches(spec: TilesetSpec) -> tuple[TilesetSpec, dict[str, str]]:
     return out, patch_of
 
 
-EMOTE_COLORS = 32
 EMOTE_MS = 120
 
 
@@ -95,10 +94,9 @@ class CharacterSheet:
     def to_rgba(self, indices: np.ndarray) -> np.ndarray:
         return self.lut[self.remap[indices]]
 
-    def reduce_palette(self, palette: Palette, max_colors: int) -> None:
+    def reduce_palette(self, palette: Palette, max_colors: int, keep: tuple[int, ...] | list[int] = ()) -> None:
         counts = np.bincount(self.frames.ravel(), minlength=len(palette.colors))
-        self.remap = palette.reduce(counts, max_colors)
-        self.lut = palette.rgba_lut(self.remap)
+        self.remap, self.lut = palette.reduce(counts, max_colors, [k for k in keep if counts[k]])
 
     def head_top(self) -> int:
         """First row of the standing front frame with a solid pixel: where an emote balloon sits."""
@@ -138,21 +136,10 @@ class BuildResult:
             darker = self.palette.shadow_lut()
             used = np.nonzero(counts)[0]
             np.add.at(counts, darker[used[used > SHADOW]], 1)
-        self.remap = self.palette.reduce(counts, self.spec.max_colors)
-        self.lut = self.palette.rgba_lut(self.remap)
+        self.remap, self.lut = self.palette.reduce(counts, self.spec.max_colors)
 
     def to_rgba(self, indices: np.ndarray) -> np.ndarray:
         return self.lut[self.remap[indices]]
-
-    def reduce_palette(self, palette: Palette, max_colors: int) -> None:
-        counts = np.bincount(self.frames.ravel(), minlength=len(palette.colors))
-        self.remap = palette.reduce(counts, max_colors)
-        self.lut = palette.rgba_lut(self.remap)
-
-    def head_top(self) -> int:
-        """First row of the standing front frame with a solid pixel: where an emote balloon sits."""
-        solid = (self.frames[0, 1] > 0) & (self.frames[0, 1] != SHADOW)
-        return int(np.argmax(solid.any(axis=1)))
 
     def probability(self, tid: int) -> float:
         """Relative chance of picking this tile among its terrain's tiles (decor tiles are rare)."""
@@ -174,13 +161,19 @@ def _add_animated(
     return tid
 
 
+def _strip_shadows(arr: np.ndarray, palette: Palette) -> None:
+    """8-bit consoles have no translucency: drop cast shadows in place for styles without them."""
+    if not palette.style.shadows:
+        arr[arr == SHADOW] = 0
+
+
 def generate(spec: TilesetSpec) -> BuildResult:
     errors = validate_spec(spec)
     if errors:
         raise SpecError(errors)
     spec, patch_of = with_patches(spec)
     T = spec.tile_size
-    palette = Palette(spec.palette_dict())
+    palette = Palette(spec.palette_dict(), spec.style)
     atlas = Atlas(T, columns=max(8, 256 // T))
     res = BuildResult(spec, atlas, palette, patch_of=patch_of)
 
@@ -294,14 +287,19 @@ def generate(spec: TilesetSpec) -> BuildResult:
             if d == "right":  # mirrored, as on the SNES
                 drawn[action, d] = [np.fliplr(f) for f in drawn[action, "left"]]
         sheet = CharacterSheet(ch.name, np.stack([np.stack(drawn[row]) for row in ROWS]), ch.frame_ms)
-        sheet.reduce_palette(palette, ch.max_colors)
+        _strip_shadows(sheet.frames, palette)
+        # 8-bit sprites have room for little more than ink, skin and clothes: make sure those are what's left.
+        keep = [ctx.ramp(s)[2] for s in info.key_colors] if palette.style.retro else []
+        sheet.reduce_palette(palette, ch.max_colors, keep)
         res.characters.append(sheet)
     if spec.characters:
         ctx = GenContext(T, spec.seed, "emotes", palette, [])
         balloons = np.stack([np.stack([emote_balloon(ctx, e, k) for k in range(FRAMES)]) for e in EMOTES])
         res.emotes = CharacterSheet("emotes", balloons, EMOTE_MS)
-        res.emotes.reduce_palette(palette, EMOTE_COLORS)
+        res.emotes.reduce_palette(palette, palette.style.emote_colors)
 
+    for tile in atlas.tiles.values():
+        _strip_shadows(tile, palette)
     res.finalize_palette()
     return res
 

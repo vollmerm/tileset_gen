@@ -32,6 +32,7 @@ class GeneratorInfo:
     decor: tuple[Callable, ...] = ()  # terrain only: features drawn onto rare detail tiles
     connected: bool = False  # object only: fn(ctx, params, mask, gate) draws one tile per N/E/S/W neighbor mask
     limit: int | None = None  # object only: landmark cap per 24x16 of preview map
+    key_colors: tuple[int, ...] = ()  # character only: slots that survive a tiny (NES) sprite palette
 
     def default_colors(self) -> list[str]:
         return [hexv for _, hexv in self.colors]
@@ -50,10 +51,11 @@ def register(
     decor=(),
     connected: bool = False,
     limit: int | None = None,
+    key_colors=(),
 ):
     def deco(fn):
         REGISTRY[name] = GeneratorInfo(
-            name, kind, fn, params, tuple(colors), doc, animatable, tuple(decor), connected, limit
+            name, kind, fn, params, tuple(colors), doc, animatable, tuple(decor), connected, limit, tuple(key_colors)
         )
         return fn
 

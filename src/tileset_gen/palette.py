@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import colorsys
 import re
+from collections.abc import Iterable
 
 import numpy as np
 
@@ -78,7 +79,10 @@ def to_lab(rgb: np.ndarray) -> np.ndarray:
 class Palette:
     """Indexed palette built up lazily as generators request ramps."""
 
-    def __init__(self, named: dict[str, str] | None = None):
+    def __init__(self, named: dict[str, str] | None = None, style: str = "snes"):
+        from .style import get as get_style
+
+        self.style = get_style(style)
         self.named: dict[str, RGB] = {k.lower(): hex_to_rgb(v) for k, v in (named or {}).items()}
         self.colors: list[RGB] = [(0, 0, 0), SHADOW_RGBA[:3]]
         self._index: dict[RGB, int] = {}
@@ -109,14 +113,16 @@ class Palette:
         base = self.resolve(color)
         key = (base, steps)
         if key not in self._ramps:
-            idxs = [self.index(c) for c in make_ramp(base, steps)]
+            idxs = [self.index(c) for c in (self.style.ramp(base) if steps == 5 else make_ramp(base, steps))]
             self._ramps[key] = idxs
             for i in idxs:
                 self._outline.setdefault(i, idxs[0])
         return self._ramps[key]
 
     def outline_for(self, idx: int) -> int:
-        """Darkest color of the ramp `idx` belongs to (used for selective outlines)."""
+        """Darkest color of the ramp `idx` belongs to (used for selective outlines), or the style's ink."""
+        if self.style.ink is not None:
+            return self.index(self.style.ink)
         return self._outline.get(idx, idx)
 
     def shadow_lut(self, steps: int = 2) -> np.ndarray:
@@ -128,11 +134,18 @@ class Palette:
                     lut[idx] = idxs[max(0, i - steps)]
         return lut
 
-    def reduce(self, counts: np.ndarray, max_colors: int) -> np.ndarray:
+    def reduce(self, counts: np.ndarray, max_colors: int, keep: Iterable[int] = ()) -> tuple[np.ndarray, np.ndarray]:
         """Merge the closest rarely-used colors until at most `max_colors` opaque remain.
 
-        Returns a remap table: new_index = remap[old_index]. Index 0 stays 0. A used
-        `SHADOW` is never merged but counts against the budget.
+        Returns (remap, lut): new_index = remap[old_index], and the (k, 4) RGBA color of
+        each new index. Index 0 stays 0 and transparent. A used `SHADOW` is never merged
+        but counts against the budget.
+
+        8-bit styles have budgets so small that merging must weigh how many pixels
+        change: the pair with the least distance x pixels of the rarer color goes first,
+        so a large area (sand, a sprite's tunic) never drifts into a far-off color.
+        Their ink is never merged away, so outlines stay black. Neither are the `keep`
+        indices (a sprite's skin and outfit), unless they alone exceed the budget.
         """
         n = len(self.colors)
         remap = np.arange(n)
@@ -142,22 +155,35 @@ class Palette:
         weight = {i: int(counts[i]) for i in alive}
         lab = to_lab(np.array(self.colors, dtype=float))
 
+        weighted = self.style.retro
+        pinned = set(keep)
+        if self.style.ink:
+            pinned.add(self._index.get(self.style.ink))
+
         def dist(a: int, b: int) -> float:
             d = lab[a] - lab[b]
-            return float(np.sum(d * d))
+            return float(np.sum(d * d)) * (min(weight[a], weight[b]) if weighted else 1)
 
         while len(alive) > max_colors:
             best = None
             for ai, a in enumerate(alive):
                 for b in alive[ai + 1 :]:
+                    if a in pinned and b in pinned and len(pinned & set(alive)) <= max_colors:
+                        continue
                     d = dist(a, b)
                     if best is None or d < best[0]:
                         best = (d, a, b)
             _, a, b = best
-            keep, drop = (a, b) if weight[a] >= weight[b] else (b, a)
-            weight[keep] += weight[drop]
-            remap[remap == drop] = keep
+            kept, drop = (a, b) if (weight[a] >= weight[b] or a in pinned) and b not in pinned else (b, a)
+            weight[kept] += weight[drop]
+            remap[remap == drop] = kept
             alive.remove(drop)
+        if weighted:
+            # Chained merges can carry a color far from where it started (gray helmet -> skin via a
+            # light shade); send each merged color to the nearest survivor instead.
+            for i in range(2, n):
+                if counts[i] and remap[i] != i and i not in pinned:
+                    remap[i] = min(alive, key=lambda a: float(np.sum((lab[a] - lab[i]) ** 2)))
 
         # Compact surviving indices into 1..k, preserving first-use order.
         compact = {0: 0}
@@ -170,15 +196,9 @@ class Palette:
         out = np.zeros(n, dtype=np.int64)
         for i in range(n):
             out[i] = compact.get(int(remap[i]), 0)
-        return out
-
-    def rgba_lut(self, remap: np.ndarray | None = None) -> np.ndarray:
-        """(N, 4) uint8 lookup table; with a remap, rows are the compacted palette."""
-        if remap is None:
-            remap = np.arange(len(self.colors))
-        lut = np.zeros((int(remap.max()) + 1, 4), dtype=np.uint8)
-        for old, new in enumerate(remap):
+        # Each merged group shows the color it kept, not whichever member happens to come last.
+        lut = np.zeros((len(compact), 4), dtype=np.uint8)
+        for old, new in compact.items():
             if new:
                 lut[new] = SHADOW_RGBA if old == SHADOW else (*self.colors[old], 255)
-        lut[0] = (0, 0, 0, 0)
-        return lut
+        return out, lut

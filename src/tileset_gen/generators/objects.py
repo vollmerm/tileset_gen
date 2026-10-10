@@ -96,7 +96,7 @@ def tree(ctx: GenContext, p: TreeParams, w: int, h: int) -> np.ndarray:
     mask = height > 0.05
     mask[:1] = mask[-1:] = False
     mask[:, :1] = mask[:, -1:] = False
-    canopy = shade(height, mask, fr[1:5], dither=0.7, ambient=0.2)
+    canopy = shade(height, mask, fr[1:5], dither=ctx.dither(0.7), ambient=0.2)
     # Seen from slightly above, the underside of the crown sinks into shadow.
     under = mask & ~shift(mask, -max(2, H // 12), 0, False)
     canopy[under & (canopy > fr[1])] = fr[1]
@@ -184,7 +184,7 @@ def bush(ctx: GenContext, p: BushParams, w: int, h: int) -> np.ndarray:
     height = ellipse_height(H, W, blobs)
     mask = height > 0.05
     mask[base_y + 1 :] = False
-    c = shade(height, mask, r[1:5], dither=0.7)
+    c = shade(height, mask, r[1:5], dither=ctx.dither(0.7))
     c[mask & ~shift(mask, -1, 0, False)] = r[0]
     if p.berries > 0:
         a = ctx.ramp(1)
@@ -224,7 +224,7 @@ def rock(ctx: GenContext, p: RockParams, w: int, h: int) -> np.ndarray:
     mask[base + 1 :] = False
     facets = Noise(ctx.rng("facets"), max(W, H), cells=3).tile()[:H, :W]
     height = height + (facets - 0.5) * 0.18 * (height > 0)
-    c = shade(height, mask, [r[1], r[2], r[2], r[3], r[4]], dither=0.3, strength=5.0, ambient=0.1)
+    c = shade(height, mask, [r[1], r[2], r[2], r[3], r[4]], dither=ctx.dither(0.3), strength=5.0, ambient=0.1)
     # A flat-ish lit top plane over a darker front face, the way rocks read in 3/4 view.
     top = _top_faces(mask, max(2, int(R * 0.45)))
     c[top & (c < r[3])] = r[3]

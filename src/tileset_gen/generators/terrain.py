@@ -555,7 +555,7 @@ class GrassParams(Params):
 def grass(ctx: GenContext, p: GrassParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
     f = contrast(_field(ctx, variant, 3, octaves=3), 1.2 + p.roughness * 1.2)
-    tile = quantize(f, [r[2], r[2], r[3]], dither=0.8)
+    tile = quantize(f, [r[2], r[2], r[3]], dither=ctx.dither(0.8))
     tile[f < 0.3] = r[1]
     for x, y, u in _scatter(ctx, variant, int(p.density * T * T / 14)):
         _px(tile, x, y, r[3])
@@ -591,7 +591,7 @@ def dirt(ctx: GenContext, p: DirtParams, variant: int, phase: float) -> np.ndarr
     T, r = ctx.T, ctx.ramp(0)
     # Mottled earth: darker and lighter clumps rather than one flat brown.
     f = contrast(_field(ctx, variant, 3), 1.3 + p.roughness * 0.9)
-    tile = quantize(f, [r[1], r[2], r[2], r[3]], dither=0.9)
+    tile = quantize(f, [r[1], r[2], r[2], r[3]], dither=ctx.dither(0.9))
     for x, y, u in _scatter(
         ctx, variant, max(1, round(p.roughness * T * T / 128)), margin=4, key="patches", edge=False
     ):
@@ -624,7 +624,7 @@ class SandParams(Params):
 def sand(ctx: GenContext, p: SandParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
     f = contrast(_field(ctx, variant, 3), 2.0)
-    tile = quantize(f, [r[2], r[3], r[3]], dither=1.0)
+    tile = quantize(f, [r[2], r[3], r[3]], dither=ctx.dither(1.0))
     ys, xs = np.mgrid[0:T, 0:T]
     bend = (Noise(ctx.rng("bend", variant), T, cells=2).tile() - 0.5) * T * 0.25 * _inner(T)
     wave = (ys + 1.5 * np.sin(2 * np.pi * xs / T) + 0.8 * np.sin(4 * np.pi * xs / T + 1.0) + bend) % (T / 2)
@@ -768,7 +768,7 @@ def snow(ctx: GenContext, p: SnowParams, variant: int, phase: float) -> np.ndarr
     T, r = ctx.T, ctx.ramp(0)
     f = contrast(_field(ctx, variant, 4), 1.6)
     # Near-white bases clamp their top ramp steps to the same white, so shade from step 2 up.
-    tile = quantize(f, [r[2], r[3], r[3]], dither=0.8)
+    tile = quantize(f, [r[2], r[3], r[3]], dither=ctx.dither(0.8))
     for x, y, u in _scatter(ctx, variant, max(1, round(p.drifts * T * T / 100)), margin=4, key="drifts", edge=False):
         _patch(tile, x, y, r[1], r[3], u)
     for x, y, _ in _scatter(ctx, variant, T // 6, margin=1):
@@ -794,7 +794,7 @@ def water(ctx: GenContext, p: WaterParams, variant: int, phase: float) -> np.nda
     T, r = ctx.T, ctx.ramp(0)
     base = _field(ctx, variant, 2, t=phase, tcells=2)
     levels = [r[1], r[1], r[2]] if p.depth > 0.6 else [r[2], r[2], r[3]] if p.depth < 0.25 else [r[1], r[2], r[2]]
-    tile = quantize(contrast(base, 1.3), levels, dither=1.0)
+    tile = quantize(contrast(base, 1.3), levels, dither=ctx.dither(1.0))
     crest = _field(ctx, variant, (2, 5), t=phase, tcells=2, dx=phase * T, amount=1.0, key="waves")
     band = 0.02 + p.waves * 0.04
     tile[np.abs(crest - 0.66) < band] = r[3]
@@ -835,7 +835,7 @@ def lava(ctx: GenContext, p: LavaParams, variant: int, phase: float) -> np.ndarr
     )
     ridge = np.abs(contrast(flow, 3.0) - 0.5) * 2.0  # 0 along the veins
     glow = np.clip(1.0 - ridge / (0.2 + (1.0 - p.crust) * 0.5), 0.0, 1.0) ** 0.7
-    tile = quantize(glow, [r[0], r[1], r[2], r[3], r[4]], dither=0.7)
+    tile = quantize(glow, [r[0], r[1], r[2], r[3], r[4]], dither=ctx.dither(0.7))
     return tile
 
 

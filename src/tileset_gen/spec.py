@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from .style import STYLES, StyleName
 
 ParamValue = float | int | str | bool
 EdgeStyle = Literal["soft", "shore", "cliff", "blend"]
@@ -67,7 +69,11 @@ class CharacterSpec(BaseModel):
     colors: list[str] = Field(default_factory=list, description="palette names or hex, in the generator's slot order")
     params: dict[str, ParamValue] = Field(default_factory=dict)
     max_colors: int = Field(
-        15, ge=3, le=31, description="colors in this sprite's own palette: 15 like a SNES sprite, 3 like the NES"
+        15,
+        ge=3,
+        le=31,
+        description="colors in this sprite's own palette: 15 like a SNES sprite, 3 like the NES "
+        "(defaults to the tileset style's sprite size)",
     )
     frame_ms: int = Field(160, ge=60, le=600, description="duration of each walk frame")
     place_on: list[str] = Field(default_factory=list, description="terrains it may stand on in the preview")
@@ -79,13 +85,37 @@ class TilesetSpec(BaseModel):
     theme: str = ""
     seed: int = 0
     tile_size: Literal[16, 32] = 16
-    max_colors: int = Field(48, ge=8, le=255)
+    style: StyleName = Field(
+        "snes",
+        description="snes: 16-bit shading; nes: NES hardware palette, 3 shades, black outlines; "
+        "gbc: Game Boy Color 15-bit color, 4 shades",
+    )
+    max_colors: int = Field(48, ge=8, le=255, description="tileset color budget (defaults to the style's)")
     palette: list[NamedColor] = Field(default_factory=list)
     terrains: list[TerrainSpec]
     transitions: list[TransitionSpec] = Field(default_factory=list)
     objects: list[ObjectSpec] = Field(default_factory=list)
     animations: list[AnimationSpec] = Field(default_factory=list)
     characters: list[CharacterSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _style_defaults(self) -> TilesetSpec:
+        """Color budgets left unset follow the style: 16 colors and 3-color sprites for the NES, say."""
+        # Written through __dict__ so they still count as unset, and `restyled` can recompute them.
+        st = STYLES[self.style]
+        if "max_colors" not in self.model_fields_set:
+            self.__dict__["max_colors"] = st.max_colors
+        for c in self.characters:
+            if "max_colors" not in c.model_fields_set:
+                c.__dict__["max_colors"] = st.sprite_colors
+        return self
+
+    def restyled(self, style: StyleName) -> TilesetSpec:
+        """A copy in another style, with the tileset and sprite color budgets reset to that style's."""
+        data = self.model_dump(exclude_unset=True, exclude={"max_colors"})
+        for c in data.get("characters", []):
+            c.pop("max_colors", None)
+        return TilesetSpec.model_validate({**data, "style": style})
 
     def palette_dict(self) -> dict[str, str]:
         return {c.name: c.hex for c in self.palette}

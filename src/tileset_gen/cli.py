@@ -17,6 +17,14 @@ SeedOpt = Annotated[Optional[int], typer.Option("--seed", help="Override the spe
 TileOpt = Annotated[int, typer.Option("--tile-size", help="Tile size in pixels (16 or 32).")]
 MapOpt = Annotated[str, typer.Option("--map-size", help="Preview map size in tiles, WxH.")]
 ScaleOpt = Annotated[int, typer.Option("--preview-scale", help="Nearest-neighbor upscale for preview.png.")]
+StyleOpt = Annotated[
+    Optional[str],
+    typer.Option(
+        "--style",
+        help="Console look: snes (16-bit), nes (NES palette, 3 shades) or gbc (Game Boy Color). "
+        "Overriding a spec's style also resets its color budgets to the style's defaults.",
+    ),
+]
 
 
 def _parse_size(value: str) -> tuple[int, int]:
@@ -25,6 +33,14 @@ def _parse_size(value: str) -> tuple[int, int]:
         return w, h
     except ValueError as e:
         raise typer.BadParameter(f"expected WxH, got {value!r}") from e
+
+
+def _check_style(style: str | None) -> str | None:
+    from .style import STYLES
+
+    if style is not None and style not in STYLES:
+        raise typer.BadParameter(f"style must be one of {', '.join(STYLES)}")
+    return style
 
 
 def _check_tile_size(tile_size: int) -> int:
@@ -51,14 +67,14 @@ def _do_build(spec: TilesetSpec, out: Path, map_size: str, scale: int) -> None:
         typer.echo(f"  {out / 'characters' / 'emotes'}.png")
 
 
-def _do_plan(prompt: str, seed: int | None, tile_size: int) -> TilesetSpec:
+def _do_plan(prompt: str, seed: int | None, tile_size: int, style: str | None) -> TilesetSpec:
     import anthropic
 
     from .planner import PlannerError, plan
 
     typer.echo("Planning with Claude Haiku...", err=True)
     try:
-        return plan(prompt, seed=seed or 0, tile_size=_check_tile_size(tile_size))
+        return plan(prompt, seed=seed or 0, tile_size=_check_tile_size(tile_size), style=_check_style(style) or "snes")
     except (PlannerError, anthropic.APIError) as e:
         typer.echo(f"planner failed: {e}", err=True)
         raise typer.Exit(1) from e
@@ -70,9 +86,10 @@ def plan_cmd(
     output: Annotated[Path, typer.Option("-o", "--output", help="Where to write the spec.")] = Path("spec.json"),
     seed: SeedOpt = None,
     tile_size: TileOpt = 16,
+    style: StyleOpt = None,
 ) -> None:
     """Ask the LLM planner for a spec and save it (no rendering)."""
-    spec = _do_plan(prompt, seed, tile_size)
+    spec = _do_plan(prompt, seed, tile_size, style)
     spec.save(output)
     typer.echo(f"wrote {output}")
 
@@ -84,9 +101,12 @@ def build_cmd(
     seed: SeedOpt = None,
     map_size: MapOpt = "24x16",
     preview_scale: ScaleOpt = 3,
+    style: StyleOpt = None,
 ) -> None:
     """Render a spec to a tileset (offline, no API calls)."""
     spec = TilesetSpec.load(spec_path)
+    if _check_style(style):
+        spec = spec.restyled(style)
     if seed is not None:
         spec.seed = seed
     _do_build(spec, output or Path("out") / spec.name, map_size, preview_scale)
@@ -100,9 +120,10 @@ def generate_cmd(
     tile_size: TileOpt = 16,
     map_size: MapOpt = "24x16",
     preview_scale: ScaleOpt = 3,
+    style: StyleOpt = None,
 ) -> None:
     """Plan a spec with the LLM, then build it."""
-    spec = _do_plan(prompt, seed, tile_size)
+    spec = _do_plan(prompt, seed, tile_size, style)
     _do_build(spec, output or Path("out") / spec.name, map_size, preview_scale)
 
 

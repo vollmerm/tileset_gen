@@ -47,7 +47,7 @@ def torch(ctx: GenContext, p: TorchParams, frame: int, n_frames: int) -> np.ndar
     dx = xs - cx - sway * np.clip(rel, 0, 1)
     flame = (rel >= -0.15) & (rel <= 1.0) & (np.abs(dx) <= width + (wob - 0.5) * 1.5)
     heat = np.clip(1.0 - np.abs(dx) / (width + 0.5) * 0.7 - rel * 0.6 + (wob - 0.5) * 0.3, 0, 1)
-    flame_px = quantize(heat, [fl[1], fl[2], fl[3], fl[4]], dither=0.4)
+    flame_px = quantize(heat, [fl[1], fl[2], fl[3], fl[4]], dither=ctx.dither(0.4))
     c = np.where(flame, flame_px, c).astype(np.uint8)
     rng = ctx.rng("spark", frame)
     if rng.random() < 0.6:
@@ -72,7 +72,7 @@ def waterfall(ctx: GenContext, p: WaterfallParams, frame: int, n_frames: int) ->
     t = frame / n_frames
     f = Noise(ctx.rng("streaks"), T, cells=(6, 1), octaves=2).tile(dy=-t * T)
     g = Noise(ctx.rng("foam"), T, cells=(4, 2)).tile(dy=-t * T)
-    tile = quantize(np.clip((f - 0.3) * 2.0, 0, 1), [r[1], r[2], r[3]], dither=0.5)
+    tile = quantize(np.clip((f - 0.3) * 2.0, 0, 1), [r[1], r[2], r[3]], dither=ctx.dither(0.5))
     tile[g > 0.75 - p.foam * 0.2] = r[4]
     return tile
 

@@ -416,6 +416,7 @@ def _weapon(f: _Figure, kind: str, hx: float, hy: float, angle: float, k: float,
         ("weapon", "#b8c0d0"),
     ],
     doc="Person: hero, party member, townsfolk, guard, mage, king... Mix outfit, hair, headgear and weapon.",
+    key_colors=(0, 2),
 )
 def humanoid(ctx: GenContext, p: HumanoidParams, action: str, direction: str, frame: int) -> np.ndarray:
     b = BODIES[p.body]
@@ -695,6 +696,7 @@ class SlimeParams(Params):
     SlimeParams,
     colors=[("body", "#4a90e0"), ("mouth", "#c83a4a")],
     doc="Bouncing slime monster (1 tile of figure). Squashes and stretches as it moves; lunges to attack.",
+    key_colors=(0,),
 )
 def slime(ctx: GenContext, p: SlimeParams, action: str, direction: str, frame: int) -> np.ndarray:
     walk = (Pose(squash=0.9), Pose(), Pose(squash=-0.7))  # wide and low, resting, tall and narrow
@@ -754,6 +756,7 @@ class GhostParams(Params):
     GhostParams,
     colors=[("body", "#dce4f4"), ("eyes", "#3a3058")],
     doc="Floating sheet ghost (1 tile of figure). Bobs up and down; its hem ripples; swoops to attack.",
+    key_colors=(0,),
 )
 def ghost(ctx: GenContext, p: GhostParams, action: str, direction: str, frame: int) -> np.ndarray:
     walk = (Pose(), Pose(dy=-0.8), Pose())
@@ -825,7 +828,10 @@ def emote_balloon(ctx: GenContext, emote: str, frame: int) -> np.ndarray:
     cx, cy = 8.0, 6.8 + (1.0 - scale) * 4.0
     rx, ry = 6.6 * scale, 5.4 * scale
     bubble = f.oval(cx, cy, rx, ry) | f.trapezoid(cx - 2.0, cy + ry - 1.4, cy + ry + 2.2 * scale, 1.4 * scale, 0.0)
-    f.dome(bubble, white, cx - 1.5, cy - 1.5, rx + 1.0, ry + 1.0)
+    if ctx.palette.style.retro:
+        f.flat(bubble, white[3])  # 8-bit balloons are flat white, leaving the sprite palette to the icon
+    else:
+        f.dome(bubble, white, cx - 1.5, cy - 1.5, rx + 1.0, ry + 1.0)
     if frame > 0:
         hexv, rows = _ICONS[emote]
         ramp = ctx.palette.ramp(hexv)

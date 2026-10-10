@@ -1,0 +1,46 @@
+{
+  "name": "nes_kingdom",
+  "theme": "8-bit overworld kingdom: a castle town by the sea, forests and a slime-infested plain",
+  "seed": 11,
+  "tile_size": 16,
+  "style": "nes",
+  "palette": [
+    {"name": "grass", "hex": "#58d854"},
+    {"name": "forest", "hex": "#00a800"},
+    {"name": "sea", "hex": "#3cbcfc"},
+    {"name": "sand", "hex": "#fce0a8"},
+    {"name": "stone", "hex": "#bcbcbc"},
+    {"name": "roof", "hex": "#f83800"},
+    {"name": "wood", "hex": "#ac7c00"},
+    {"name": "royal", "hex": "#0058f8"},
+    {"name": "skin", "hex": "#f0d0b0"}
+  ],
+  "terrains": [
+    {"name": "sea", "generator": "water", "colors": ["sea"], "variants": 2, "decor": 1, "patches": 0.2, "params": {"depth": 0.3, "waves": 0.4}},
+    {"name": "beach", "generator": "sand", "colors": ["sand"], "variants": 2, "decor": 2, "patches": 0.0, "params": {"ripples": 0.2}},
+    {"name": "plain", "generator": "grass", "colors": ["grass", "sand"], "variants": 3, "decor": 2, "patches": 0.2, "params": {"density": 0.3}},
+    {"name": "plaza", "generator": "stone_floor", "colors": ["stone", "stone"], "variants": 1, "decor": 1, "patches": 0.0}
+  ],
+  "transitions": [
+    {"lower": "sea", "upper": "beach", "edge_style": "shore"},
+    {"lower": "beach", "upper": "plain", "edge_style": "soft", "roughness": 0.4},
+    {"lower": "plain", "upper": "plaza", "edge_style": "soft", "roughness": 0.3}
+  ],
+  "objects": [
+    {"name": "oak", "generator": "tree", "colors": ["forest", "wood"], "place_on": ["plain"], "density": 0.7},
+    {"name": "pine", "generator": "pine", "colors": ["forest", "wood"], "width": 1, "height": 2, "place_on": ["plain"], "density": 0.4},
+    {"name": "boulder", "generator": "rock", "colors": ["stone", "forest"], "place_on": ["plain", "beach"], "density": 0.3},
+    {"name": "inn", "generator": "house", "colors": ["roof", "sand", "wood"], "width": 3, "height": 3, "place_on": ["plain", "plaza"], "density": 0.4},
+    {"name": "rampart", "generator": "wall", "colors": ["stone"], "width": 2, "height": 2, "place_on": ["plaza"], "density": 0.3},
+    {"name": "chest", "generator": "chest", "colors": ["roof", "sand"], "place_on": ["plaza", "plain"], "density": 0.2}
+  ],
+  "animations": [
+    {"name": "sea_waves", "terrain": "sea", "frames": 2, "frame_ms": 400}
+  ],
+  "characters": [
+    {"name": "hero", "generator": "humanoid", "colors": ["skin", "#503000", "royal", "roof", "wood", "stone"], "params": {"body": "chibi", "outfit": "tunic", "hair": "spiky", "cape": true, "weapon": "sword"}, "place_on": ["plain", "plaza"]},
+    {"name": "princess", "generator": "humanoid", "colors": ["skin", "wood", "roof", "sand"], "params": {"body": "chibi", "outfit": "dress", "hair": "long", "headgear": "crown", "weapon": "none"}, "place_on": ["plaza"]},
+    {"name": "wizard", "generator": "humanoid", "colors": ["skin", "stone", "royal", "sand"], "params": {"body": "chibi", "outfit": "robe", "headgear": "wizard_hat", "beard": true, "weapon": "staff"}, "place_on": ["plain"]},
+    {"name": "slime", "generator": "slime", "colors": ["sea", "roof"], "place_on": ["plain"], "count": 3}
+  ]
+}
