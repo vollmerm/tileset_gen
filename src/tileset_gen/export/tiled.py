@@ -135,11 +135,17 @@ def write_tmx(res: BuildResult, pmap: PreviewMap, out: Path) -> None:
             "tilewidth": str(T),
             "tileheight": str(T),
             "infinite": "0",
-            "nextlayerid": "3",
-            "nextobjectid": "1",
+            "nextlayerid": "4" if pmap.characters else "3",
+            "nextobjectid": str(len(pmap.characters) + 1),
         },
     )
     ET.SubElement(root, "tileset", {"firstgid": "1", "source": "tileset.tsx"})
+    firstgid: dict[str, int] = {}
+    gid = res.atlas.tile_count + 1
+    for ch in res.characters:
+        firstgid[ch.name] = gid
+        ET.SubElement(root, "tileset", {"firstgid": str(gid), "source": f"characters/{ch.name}.tsx"})
+        gid += ch.frames.shape[0] * ch.frames.shape[1]
     for lid, (name, grid) in enumerate((("ground", pmap.ground), ("objects", pmap.objects)), 1):
         layer = ET.SubElement(
             root, "layer", {"id": str(lid), "name": name, "width": str(pmap.width), "height": str(pmap.height)}
@@ -147,4 +153,24 @@ def write_tmx(res: BuildResult, pmap: PreviewMap, out: Path) -> None:
         rows = [",".join(str(int(v) + 1) for v in row) for row in grid]  # gid 0 = empty, so -1 -> 0
         data = ET.SubElement(layer, "data", {"encoding": "csv"})
         data.text = "\n" + ",\n".join(rows) + "\n"
+    if pmap.characters:
+        # Tile objects, anchored bottom-center (the character tilesets set objectalignment="bottom").
+        group = ET.SubElement(root, "objectgroup", {"id": "3", "name": "characters"})
+        frames = {ch.name: ch.frames.shape[1] for ch in res.characters}
+        sizes = {ch.name: ch.size for ch in res.characters}
+        for oid, (name, x, y, row) in enumerate(pmap.characters, 1):
+            w, h = sizes[name]
+            ET.SubElement(
+                group,
+                "object",
+                {
+                    "id": str(oid),
+                    "name": name,
+                    "gid": str(firstgid[name] + row * frames[name] + 1),
+                    "x": str(x * T + T / 2),
+                    "y": str((y + 1) * T),
+                    "width": str(w),
+                    "height": str(h),
+                },
+            )
     _write(root, out / "preview.tmx")

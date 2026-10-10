@@ -95,4 +95,13 @@ def validate_spec(spec: TilesetSpec) -> list[str]:
                 errors.append(f"{where}: terrain generator {info.name!r} is not animatable")
         else:
             check_gen(where, a.generator, "animation", a.params)
+
+    for ch in spec.characters:
+        where = f"character {ch.name!r}"
+        check_name("character", ch.name)
+        check_colors(where, ch.colors)
+        check_gen(where, ch.generator, "character", ch.params)
+        for n in ch.place_on:
+            if n not in terrains:
+                errors.append(f"{where}: place_on references unknown terrain {n!r}")
     return errors

@@ -61,6 +61,19 @@ class AnimationSpec(BaseModel):
     params: dict[str, ParamValue] = Field(default_factory=dict)
 
 
+class CharacterSpec(BaseModel):
+    name: str
+    generator: str
+    colors: list[str] = Field(default_factory=list, description="palette names or hex, in the generator's slot order")
+    params: dict[str, ParamValue] = Field(default_factory=dict)
+    max_colors: int = Field(
+        15, ge=3, le=31, description="colors in this sprite's own palette: 15 like a SNES sprite, 3 like the NES"
+    )
+    frame_ms: int = Field(160, ge=60, le=600, description="duration of each walk frame")
+    place_on: list[str] = Field(default_factory=list, description="terrains it may stand on in the preview")
+    count: int = Field(1, ge=0, le=4, description="copies standing around the preview map")
+
+
 class TilesetSpec(BaseModel):
     name: str
     theme: str = ""
@@ -72,6 +85,7 @@ class TilesetSpec(BaseModel):
     transitions: list[TransitionSpec] = Field(default_factory=list)
     objects: list[ObjectSpec] = Field(default_factory=list)
     animations: list[AnimationSpec] = Field(default_factory=list)
+    characters: list[CharacterSpec] = Field(default_factory=list)
 
     def palette_dict(self) -> dict[str, str]:
         return {c.name: c.hex for c in self.palette}

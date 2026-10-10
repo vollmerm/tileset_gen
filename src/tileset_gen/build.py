@@ -12,6 +12,7 @@ from . import registry
 from .atlas import Atlas, ConnectedSet, ObjectGroup, WangSet
 from .context import GenContext
 from .generators.autotile import MIXED_CORNERS, compose, corner_mask
+from .generators.characters import DIRECTIONS, FRAMES
 from .generators.objects import E, W
 from .generators.terrain import decorate
 from .noise import Noise
@@ -62,6 +63,33 @@ def with_patches(spec: TilesetSpec) -> tuple[TilesetSpec, dict[str, str]]:
     return out, patch_of
 
 
+@dataclass
+class CharacterSheet:
+    """A walking sprite: frames[direction][frame] in `DIRECTIONS` order, each (h, w) palette indices.
+
+    Each character gets its own reduced palette (`max_colors`, like a SNES sprite
+    palette) instead of sharing the tileset's budget.
+    """
+
+    name: str
+    frames: np.ndarray  # (4, FRAMES, h, w)
+    frame_ms: int
+    remap: np.ndarray | None = None
+    lut: np.ndarray | None = None
+
+    @property
+    def size(self) -> tuple[int, int]:
+        """Frame (width, height) in pixels."""
+        return self.frames.shape[3], self.frames.shape[2]
+
+    def sheet(self) -> np.ndarray:
+        """Rows are directions, columns walk frames (the RPG Maker layout)."""
+        return np.concatenate([np.concatenate(list(row), axis=1) for row in self.frames], axis=0)
+
+    def to_rgba(self, indices: np.ndarray) -> np.ndarray:
+        return self.lut[self.remap[indices]]
+
+
 class SpecError(ValueError):
     def __init__(self, errors: list[str]):
         self.errors = errors
@@ -79,6 +107,7 @@ class BuildResult:
     objects: list[ObjectGroup] = field(default_factory=list)
     connected: list[ConnectedSet] = field(default_factory=list)
     animations: dict[str, int] = field(default_factory=dict)  # standalone animation -> first tile id
+    characters: list[CharacterSheet] = field(default_factory=list)
     remap: np.ndarray | None = None
     lut: np.ndarray | None = None
 
@@ -227,6 +256,18 @@ def generate(spec: TilesetSpec) -> BuildResult:
         fr = [info.fn(ctx, p, k, a.frames) for k in range(a.frames)]
         res.animations[a.name] = _add_animated(atlas, fr, a.name, "animation", a.name, a.frame_ms)
 
+    for ch in spec.characters:
+        info = registry.get(ch.generator)
+        p = info.params.model_validate(ch.params)
+        ctx = ctx_for(f"character:{ch.name}", ch.colors, info)
+        drawn = {d: [info.fn(ctx, p, d, k) for k in range(FRAMES)] for d in ("down", "left", "up")}
+        drawn["right"] = [np.fliplr(f) for f in drawn["left"]]  # mirrored, as on the SNES
+        sheet = CharacterSheet(ch.name, np.stack([np.stack(drawn[d]) for d in DIRECTIONS]), ch.frame_ms)
+        counts = np.bincount(sheet.frames.ravel(), minlength=len(palette.colors))
+        sheet.remap = palette.reduce(counts, ch.max_colors)
+        sheet.lut = palette.rgba_lut(sheet.remap)
+        res.characters.append(sheet)
+
     res.finalize_palette()
     return res
 
@@ -234,6 +275,7 @@ def generate(spec: TilesetSpec) -> BuildResult:
 def build(
     spec: TilesetSpec, out_dir: str | Path, map_size: tuple[int, int] = (24, 16), preview_scale: int = 3
 ) -> BuildResult:
+    from .export.characters import write_characters
     from .export.png_json import write_png_json
     from .export.tiled import write_tmx, write_tsx
     from .preview import make_preview, render_preview
@@ -244,6 +286,7 @@ def build(
     spec.save(out / "spec.json")
     write_png_json(res, out)
     write_tsx(res, out)
+    write_characters(res, out)
     pmap = make_preview(res, *map_size)
     write_tmx(res, pmap, out)
     render_preview(res, pmap, preview_scale).save(out / "preview.png")

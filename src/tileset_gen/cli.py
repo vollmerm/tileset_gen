@@ -44,6 +44,10 @@ def _do_build(spec: TilesetSpec, out: Path, map_size: str, scale: int) -> None:
     typer.echo(f"{len(res.atlas.tiles)} tiles, {len(res.lut) - 1} colors -> {out}/")
     for name in ("tileset.png", "tileset.json", "tileset.tsx", "preview.tmx", "preview.png", "spec.json"):
         typer.echo(f"  {out / name}")
+    if res.characters:
+        typer.echo(f"  {out / 'characters.json'}")
+        for ch in res.characters:
+            typer.echo(f"  {out / 'characters' / ch.name}.png ({len(ch.lut) - 1} colors)")
 
 
 def _do_plan(prompt: str, seed: int | None, tile_size: int) -> TilesetSpec:

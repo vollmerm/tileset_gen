@@ -34,5 +34,11 @@
   ],
   "animations": [
     {"name": "oasis_ripple", "terrain": "oasis", "frames": 4, "frame_ms": 300}
+  ],
+  "characters": [
+    {"name": "nomad", "generator": "humanoid", "colors": ["#c88a60", "#2a2028", "#4a4a7a", "sandstone", "trunk"], "params": {"outfit": "robe", "headgear": "hood"}, "place_on": ["sand"], "count": 2},
+    {"name": "sultan", "generator": "humanoid", "colors": ["#c88a60", "#2a2028", "cloth", "gold", "trunk"], "params": {"hair": "bald", "beard": true, "headgear": "crown", "outfit": "robe", "cape": true}, "place_on": ["sand"]},
+    {"name": "dancer", "generator": "humanoid", "colors": ["#d89a70", "#3a2018", "oasis", "gold", "#d89a70"], "params": {"outfit": "dress", "hair": "long"}, "place_on": ["sand"]},
+    {"name": "sand_slime", "generator": "slime", "colors": ["mesa", "cloth"], "place_on": ["mesa"], "count": 2}
   ]
 }

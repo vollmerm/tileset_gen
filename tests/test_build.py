@@ -358,3 +358,59 @@ def test_landmarks_are_capped_in_the_preview():
         if limit:
             copies = int(np.sum(pmap.objects == group.tiles[0][0]))
             assert copies <= limit, (o.name, copies)
+
+
+def test_characters_export_sheets_tilesets_and_map_objects(tmp_path: Path):
+    spec = load("grassland")
+    res = build(spec, tmp_path, map_size=(16, 12), preview_scale=1)
+    assert [c.name for c in res.characters] == [c.name for c in spec.characters]
+    meta = json.loads((tmp_path / "characters.json").read_text())
+    for ch, doc in zip(res.characters, meta["characters"]):
+        w, h = ch.size
+        assert w == spec.tile_size and h in (spec.tile_size, spec.tile_size * 3 // 2)
+        img = np.asarray(Image.open(tmp_path / doc["image"]).convert("RGBA"))
+        assert img.shape == (4 * h, 3 * w, 4)
+        opaque = {tuple(px[:3]) for px in img.reshape(-1, 4) if px[3] == 255}
+        assert len(opaque) <= next(c for c in spec.characters if c.name == ch.name).max_colors
+        assert ((img[..., 3] > 0) & (img[..., 3] < 255)).any(), "a translucent ground shadow"
+        # "right" is "left" mirrored.
+        assert np.array_equal(ch.frames[2], ch.frames[1][:, :, ::-1])
+        tsx = ET.parse(tmp_path / "characters" / f"{ch.name}.tsx").getroot()
+        assert tsx.get("tilecount") == "12" and tsx.get("objectalignment") == "bottom"
+        assert len(list(tsx.iter("animation"))) == 4
+    tmx = ET.parse(tmp_path / "preview.tmx").getroot()
+    tilesets = [(int(t.get("firstgid")), t.get("source")) for t in tmx.iter("tileset")]
+    assert tilesets[0] == (1, "tileset.tsx") and len(tilesets) == 1 + len(res.characters)
+    objs = list(tmx.iter("object"))
+    assert objs and len(objs) <= sum(c.count for c in spec.characters)
+    last = tilesets[-1][0] + 12
+    for o in objs:
+        assert res.atlas.tile_count < int(o.get("gid")) < last
+
+
+def test_characters_stay_off_water_and_objects(tmp_path: Path):
+    from tileset_gen.preview import make_preview
+
+    res = generate(load("grassland"))
+    pmap = make_preview(res, 24, 16)
+    names = {t.name for t in res.spec.terrains}
+    allowed = {c.name: set(c.place_on) for c in res.spec.characters}
+    for name, x, y, row in pmap.characters:
+        assert pmap.objects[y, x] < 0 and 0 <= row < 4
+        tid = int(pmap.ground[y, x])
+        assert res.atlas.meta[tid].props.get("terrain") in names
+        host = res.patch_of.get(res.atlas.meta[tid].props["terrain"], res.atlas.meta[tid].props["terrain"])
+        assert host in allowed[name]
+
+
+def test_character_validation():
+    spec = load("grassland")
+    spec.characters[0].generator = "tree"
+    spec.characters[1].place_on = ["lava"]
+    spec.characters[2].params = {"outfit": "bikini"}
+    spec.characters[3].name = "oak"
+    errors = "\n".join(validate_spec(spec))
+    assert "unknown character generator 'tree'" in errors
+    assert "unknown terrain 'lava'" in errors
+    assert "outfit" in errors
+    assert "'oak': duplicate name" in errors

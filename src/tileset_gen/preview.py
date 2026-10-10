@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from PIL import Image
@@ -22,6 +22,7 @@ class PreviewMap:
     ground: np.ndarray  # (H, W) tile ids
     objects: np.ndarray  # (H, W) tile ids, -1 = empty
     chain: list[str]
+    characters: list[tuple[str, int, int, int]] = field(default_factory=list)  # (name, x, y, direction row)
 
 
 def terrain_chain(res: BuildResult) -> list[str]:
@@ -243,7 +244,26 @@ def make_preview(res: BuildResult, width: int = 24, height: int = 16) -> Preview
             if spots:
                 place(group, *spots[int(rng.integers(len(spots)))])
                 break
-    return PreviewMap(width, height, ground, objects, terrain_chain(res))
+
+    # Characters stand on open ground, a little apart, mostly facing the camera.
+    characters: list[tuple[str, int, int, int]] = []
+    taken: set[tuple[int, int]] = set()
+    for ch in spec.characters:
+        allowed = allowed_on(ch)
+        spots = [
+            (x, y)
+            for y in range(1, height)
+            for x in range(width)
+            if free(x, y, allowed) and not any((x + i, y + j) in taken for i in (-1, 0, 1) for j in (-1, 0, 1))
+        ]
+        for k in rng.permutation(len(spots))[: ch.count]:
+            x, y = spots[k]
+            if any((x + i, y + j) in taken for i in (-1, 0, 1) for j in (-1, 0, 1)):
+                continue
+            taken.add((x, y))
+            characters.append((ch.name, x, y, int(rng.choice(4, p=[0.55, 0.15, 0.15, 0.15]))))
+    characters.sort(key=lambda c: (c[2], c[1]))
+    return PreviewMap(width, height, ground, objects, terrain_chain(res), characters)
 
 
 def render_preview(res: BuildResult, pmap: PreviewMap, scale: int = 3) -> Image.Image:
@@ -262,7 +282,25 @@ def render_preview(res: BuildResult, pmap: PreviewMap, scale: int = 3) -> Image.
                 solid = (o > 0) & ~shadow
                 block[solid] = o[solid]
             img[y * T : (y + 1) * T, x * T : (x + 1) * T] = block
+    # Characters have their own palettes: cast their shadows in index space, then paint them over the RGBA map.
+    sheets = {c.name: c for c in res.characters}
+    sprites = []
+    for name, x, y, row in pmap.characters:
+        sheet = sheets[name]
+        sprite = sheet.frames[row, 1]
+        h, w = sprite.shape
+        x0, y0 = x * T + (T - w) // 2, (y + 1) * T - h
+        cut = max(0, -y0)
+        sprite, y0 = sprite[cut:], y0 + cut
+        region = img[y0 : y0 + sprite.shape[0], x0 : x0 + w]
+        shadow = sprite == SHADOW
+        region[shadow] = darker[region[shadow]]
+        sprites.append((sheet, sprite, x0, y0))
     rgba = res.to_rgba(img)
+    for sheet, sprite, x0, y0 in sprites:
+        region = rgba[y0 : y0 + sprite.shape[0], x0 : x0 + sprite.shape[1]]
+        solid = (sprite > 0) & (sprite != SHADOW)
+        region[solid] = sheet.to_rgba(sprite)[solid]
     out = Image.fromarray(rgba, "RGBA")
     return out.resize((out.width * scale, out.height * scale), Image.NEAREST)
 

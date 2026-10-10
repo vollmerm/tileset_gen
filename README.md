@@ -1,8 +1,8 @@
 # tileset-gen
 
-Procedurally generates 8/16-bit JRPG-style pixel-art tilesets: terrain autotiles, objects and animated tiles, exported as a PNG atlas, JSON metadata and a Tiled tileset, with a rendered preview map.
+Procedurally generates 8/16-bit JRPG-style pixel-art tilesets: terrain autotiles, objects and animated tiles, exported as a PNG atlas, JSON metadata and a Tiled tileset, with a rendered preview map. It also draws walking character sprite sheets (heroes, townsfolk, monsters) in the same palette and lighting, so they fit the tileset.
 
-An optional LLM planner (Claude Haiku) turns a theme like `"haunted swamp village"` into a **spec**: palette, terrains, transitions, objects and animations, plus their generator parameters. The model never draws pixels. Seeded Python generators render everything, so the same spec and seed always produce the same output.
+An optional LLM planner (Claude Haiku) turns a theme like `"haunted swamp village"` into a **spec**: palette, terrains, transitions, objects, animations and characters, plus their generator parameters. The model never draws pixels. Seeded Python generators render everything, so the same spec and seed always produce the same output.
 
 ## Quick start
 
@@ -32,6 +32,11 @@ Other commands: `tileset-gen validate SPEC`, `tileset-gen generators` (lists eve
 | `preview.tmx` | Tiled map of the preview (ground + objects layers). |
 | `preview.png` | Rendered preview map. |
 | `spec.json` | The exact spec that was built, so you can rebuild offline. |
+| `characters/<name>.png` | One sprite sheet per character: rows are directions (down, left, right, up), columns are 3 walk frames (step, stand, step), the RPG Maker layout. Frames are one tile wide and 1 or 1.5 tiles tall. |
+| `characters/<name>.tsx` | Tiled tileset for that sheet. Each direction's standing frame plays the 0-1-2-1 walk cycle, and objects anchor bottom-center. |
+| `characters.json` | Frame size, per-character palette, frame timing and the frame coordinates of each direction's walk cycle. |
+
+`preview.tmx` also gets a `characters` object layer and `preview.png` shows them standing around the map.
 
 ## Spec format
 
@@ -47,7 +52,10 @@ See `examples/specs/` for complete specs. The outline:
   "objects": [{"name": "big_oak", "generator": "tree", "width": 2, "height": 2,
                "place_on": ["grass"], "density": 0.4}, ...],
   "animations": [{"name": "waves", "terrain": "water", "frames": 4, "frame_ms": 250},   // animate a terrain
-                 {"name": "torch", "generator": "torch", "frames": 4}]                 // standalone
+                 {"name": "torch", "generator": "torch", "frames": 4}],                // standalone
+  "characters": [{"name": "hero", "generator": "humanoid", "colors": ["#f0c49a", "#7a4a2a", "water", "gold"],
+                  "params": {"hair": "spiky", "cape": true}, "place_on": ["grass"], "count": 1,
+                  "max_colors": 15, "frame_ms": 160}, ...]
 }
 ```
 
@@ -59,6 +67,16 @@ See `examples/specs/` for complete specs. The outline:
 
 Landmark generators (house, well, chest, sign, door) have a `limit`: the preview places at most that many copies per 24x16 of map, whatever their density. `tileset-gen generators` shows the limits. Fences are *connected* objects. The generator draws one tile for each combination of neighbors the fence continues into, plus a gate. The preview builds rectangular pens with a gate in the south side, then puts something inside. Connected objects must be 1x1.
 
+### Characters
+
+Character generators draw a 4-direction, 3-frame walk cycle:
+
+- `humanoid` (5 color slots: skin, hair, outfit, accent, legs). `body` is `classic` (16x24 at 16px tiles, like FF6 or Chrono Trigger) or `chibi` (16x16, like Dragon Quest). Pick an `outfit` (tunic, robe, armor, dress), `hair` (short, long, spiky, ponytail, bald) and `headgear` (none, hood, wizard_hat, helmet, bandana, crown), and optionally a `cape` and a `beard`. Together these cover heroes, mages, knights, villagers, kings and so on.
+- `slime`: a Dragon Quest-style teardrop or round blob that squashes and stretches as it moves.
+- `ghost`: a floating sheet that bobs, with a rippling hem and a detached shadow.
+
+To make characters match a tileset, name its palette colors in `colors` (a robe in the roof color, armor in the stone color). Their ramps, light direction, selective outlines and translucent ground shadow then match the tileset's objects. Each character gets its own palette, reduced to `max_colors` (default 15, the size of a SNES sprite palette; 3 gives an NES look). Characters don't use up the tileset's `max_colors`. "Right" frames are "left" mirrored, as on the SNES. In the preview, `count` copies stand on open `place_on` ground, kept off objects and away from each other.
+
 ## How it works
 
 - **Index-space rendering.** Generators draw palette indices, not RGB. Each base color expands into a 5-step ramp whose shadows shift toward blue and highlights toward yellow. Before export, the palette is merged down to `max_colors`: the closest pair of rarely used colors is merged first, with distance measured in CIELAB so that merges follow what the eye sees.
@@ -68,7 +86,7 @@ Landmark generators (house, well, chest, sign, door) have a `limit`: the preview
 - **3/4 perspective.** Objects use the SNES-JRPG view: you see their fronts and their tops. Examples are the chest lid, barrel head, wall cap, house roof with lit and shaded hip slopes, and the chimney top. Light comes from the upper left. The eaves shade the wall below them, doors and windows sit recessed, and anything standing on the ground casts a shadow down and to the right. Shadows use a reserved palette index that is exported as translucent dark violet, so in Tiled they darken whatever ground is underneath. The preview composites them by stepping the ground two shades down its ramp.
 - **Autotiles.** Each transition produces the 16 corner-Wang combinations. The boundary is a bilinear blend of the four corner values plus tile-periodic noise, so neighboring tiles agree along shared edges. Edge styles add outlines, foam or cliff faces.
 - **Animations.** Animatable terrains (water, lava) are re-rendered with a looping time phase, and frame 0 is the static tile. Transitions that touch an animated terrain get animated too.
-- **Planner.** `planner.py` calls `claude-haiku-5-5` with structured outputs. The system prompt's generator catalog comes from the registry, so the prompt and code stay in sync. If the planned spec fails validation, the errors go back to the model once for a fix.
+- **Planner.** `planner.py` calls `claude-haiku-5-5` with structured outputs. The system prompt's generator catalog comes from the registry, so the prompt and code stay in sync. If the planned spec fails validation, the errors go back to the model once for a fix. The wire schema avoids unions and nullable fields, so params are `"name=value"` strings: the API compiles the schema into a grammar with a size limit, and the spec is close to it. Keep new spec fields off the wire unless the model needs to choose them (`refine` carries per-character `max_colors` and `frame_ms` over from the old spec).
 
 ## Adding a generator
 
@@ -77,6 +95,7 @@ Register a function in `src/tileset_gen/generators/` with `@register(name, kind,
 - Terrain: `fn(ctx, params, variant, phase) -> uint8[T, T]`
 - Object: `fn(ctx, params, width, height) -> uint8[h*T, w*T]`, with 0 as transparent
 - Animation: `fn(ctx, params, frame, n_frames) -> uint8[T, T]`
+- Character: `fn(ctx, params, direction, frame) -> uint8[h, T]`, where direction is `down`, `left` or `up` and frame is 0-2. Every frame must have the same height. Lay shapes out with `_Figure` in `generators/characters.py`, which works in 16px-sprite units so one design renders at both tile sizes.
 
 Use `ctx.ramp(slot)` for colors and `ctx.rng(...)` for randomness.
 

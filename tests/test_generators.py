@@ -40,7 +40,7 @@ def test_generator_extremes(name: str, params: dict, T: int):
     g = registry.get(name)
     p = g.params.model_validate(params)
     sizes = [(1, 1), (2, 2), (3, 3), (1, 2)] if g.kind == "object" else [None]
-    seeds = range(40) if g.kind == "object" else range(3)
+    seeds = range(40) if g.kind == "object" else range(6) if g.kind == "character" else range(3)
     for seed, size in itertools.product(seeds, sizes):
         ctx = GenContext(T, seed, f"fuzz:{name}", Palette(), g.default_colors())
         if g.kind == "terrain":
@@ -49,6 +49,11 @@ def test_generator_extremes(name: str, params: dict, T: int):
         elif g.connected:
             out = [g.fn(ctx, p, mask) for mask in range(16)] + [g.fn(ctx, p, 2 | 8, gate=True)]
             shape = (T, T)
+        elif g.kind == "character":
+            out = [g.fn(ctx, p, d, k) for d in ("down", "left", "up") for k in range(3)]
+            shape = out[0].shape
+            assert shape[1] == T and shape[0] in (T, T * 3 // 2)
+            assert all((a > 0).any() for a in out), "every frame draws something"
         elif g.kind == "object":
             out = [g.fn(ctx, p, *size)]
             shape = (size[1] * T, size[0] * T)

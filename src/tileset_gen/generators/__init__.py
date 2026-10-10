@@ -1,3 +1,3 @@
 """Importing this package registers every generator."""
 
-from . import animation, objects, terrain  # noqa: F401
+from . import animation, characters, objects, terrain  # noqa: F401

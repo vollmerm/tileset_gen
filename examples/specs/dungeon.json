@@ -35,5 +35,11 @@
     {"name": "lava_flow", "terrain": "lava", "frames": 4, "frame_ms": 220},
     {"name": "torch", "generator": "torch", "frames": 4, "frame_ms": 120},
     {"name": "save_crystal", "generator": "crystal", "colors": ["crystal"], "frames": 6, "frame_ms": 150}
+  ],
+  "characters": [
+    {"name": "knight", "generator": "humanoid", "colors": ["#f0c49a", "#5a3a28", "flagstone", "gold", "mortar"], "params": {"outfit": "armor", "headgear": "helmet", "cape": true}, "place_on": ["floor", "bricks"]},
+    {"name": "cultist", "generator": "humanoid", "colors": ["#d8b090", "#2a2430", "#6a2a48", "lava", "mortar"], "params": {"outfit": "robe", "headgear": "hood"}, "place_on": ["bricks"], "count": 2},
+    {"name": "ghost", "generator": "ghost", "colors": ["#c8e8f0", "mortar"], "place_on": ["floor"], "count": 2},
+    {"name": "lava_slime", "generator": "slime", "colors": ["lava", "mortar"], "params": {"shape": "round", "smile": false}, "place_on": ["floor"]}
   ]
 }

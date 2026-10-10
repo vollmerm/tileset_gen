@@ -25,7 +25,7 @@ GOOD = {
             "variants": 2,
             "decor": 3,
             "patches": 0.3,
-            "params": [{"name": "density", "value": 0.4}],
+            "params": ["density=0.4"],
         },
     ],
     "transitions": [{"lower": "water", "upper": "grass", "edge_style": "shore", "roughness": 0.5}],
@@ -36,7 +36,7 @@ GOOD = {
             "colors": [],
             "width": 1,
             "height": 1,
-            "params": [{"name": "clumps", "value": 4}],
+            "params": ["clumps=4"],
             "place_on": ["grass"],
             "density": 0.5,
         }
@@ -45,11 +45,21 @@ GOOD = {
         {
             "name": "waves",
             "terrain": "water",
-            "generator": None,
+            "generator": "",
             "colors": [],
             "frames": 4,
             "frame_ms": 200,
             "params": [],
+        }
+    ],
+    "characters": [
+        {
+            "name": "hero",
+            "generator": "humanoid",
+            "colors": ["#f0c49a", "#6a4028", "water"],
+            "params": ["hair=spiky", "cape=true"],
+            "place_on": ["grass"],
+            "count": 1,
         }
     ],
 }
@@ -93,6 +103,7 @@ def test_plan_returns_valid_spec():
     assert spec.seed == 9 and spec.tile_size == 32
     assert spec.terrains[1].params == {"density": 0.4}
     assert spec.objects[0].params == {"clumps": 4}
+    assert spec.characters[0].params == {"hair": "spiky", "cape": True}
     call = client.messages.calls[0]
     assert call["model"] == MODEL == "claude-haiku-5-5"
     assert call["output_format"] is WireSpec
@@ -124,7 +135,7 @@ def test_plan_handles_refusal():
 
 def test_system_prompt_lists_generators():
     prompt = system_prompt()
-    for name in ("grass", "water", "tree", "house", "torch"):
+    for name in ("grass", "water", "tree", "house", "torch", "humanoid", "slime"):
         assert f"- {name}" in prompt
 
 
@@ -134,7 +145,7 @@ def test_refine_round_trips_and_keeps_build_settings():
 
     old = plan("meadow", seed=5, tile_size=32, client=fake_client(GOOD))
     changed = {**GOOD, "objects": GOOD["objects"] + [{**GOOD["objects"][0], "name": "birch", "density": 0.7}]}
-    changed["terrains"] = [GOOD["terrains"][0], {**GOOD["terrains"][1], "params": [{"name": "density", "value": 0.9}]}]
+    changed["terrains"] = [GOOD["terrains"][0], {**GOOD["terrains"][1], "params": ["density=0.9"]}]
     client = fake_client(changed)
     new = refine(old, "add birches and lusher grass", client=client)
     assert (new.seed, new.tile_size, new.max_colors) == (5, 32, old.max_colors)
@@ -145,3 +156,28 @@ def test_refine_round_trips_and_keeps_build_settings():
     assert any(line.startswith("~ terrain grass") and "0.9" in line for line in diff)
     assert spec_diff(old, old) == []
     assert isinstance(new, TilesetSpec)
+
+
+def test_wire_params_round_trip():
+    from tileset_gen.planner import param_str, parse_params
+
+    params = {"density": 0.4, "clumps": 3, "cape": True, "snow": False, "outfit": "robe"}
+    assert parse_params([param_str(k, v) for k, v in params.items()]) == params
+    assert parse_params(["tiers = 3.0", "style=stone"]) == {"tiers": 3, "style": "stone"}
+
+
+def test_wire_schema_has_no_unions():
+    # Unions (number|bool|string values, nullable fields) blow up the compiled output grammar, and the
+    # API rejects grammars past its size limit.
+    import json
+
+    assert "anyOf" not in json.dumps(WireSpec.model_json_schema())
+
+
+def test_refine_keeps_character_settings_the_wire_omits():
+    from tileset_gen.planner import refine
+
+    old = plan("meadow", client=fake_client(GOOD))
+    old.characters[0].max_colors, old.characters[0].frame_ms = 3, 200
+    new = refine(old, "nothing", client=fake_client(GOOD))
+    assert (new.characters[0].max_colors, new.characters[0].frame_ms) == (3, 200)

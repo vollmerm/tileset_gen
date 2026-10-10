@@ -13,7 +13,7 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
-Kind = Literal["terrain", "object", "animation"]
+Kind = Literal["terrain", "object", "animation", "character"]
 
 
 class Params(BaseModel):
@@ -96,7 +96,7 @@ def describe_for_prompt() -> str:
     """Human/LLM-readable catalog of every generator, its color slots and params."""
     _load()
     lines = []
-    for kind in ("terrain", "object", "animation"):
+    for kind in ("terrain", "object", "animation", "character"):
         lines.append(f"## {kind} generators")
         for g in REGISTRY.values():
             if g.kind != kind:
