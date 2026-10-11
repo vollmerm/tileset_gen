@@ -108,6 +108,7 @@ To make characters match a tileset, name its palette colors in `colors` (a robe 
 | Outlines | selective (darkest shade of each ramp) | black | near-black |
 | Cast shadows | translucent | none | none |
 | Dithering | full | none (flat fills) | light |
+| Water and wood floors | noise textures | flat fill with wave arcs; flat 8px boards | as `snes` |
 | Default `max_colors` | 48 | 16 | 32 |
 | Default sprite `max_colors` | 15 | 3 (black, skin, outfit) | 3 |
 

@@ -736,6 +736,14 @@ def wood_floor(ctx: GenContext, p: WoodParams, variant: int, phase: float) -> np
     rng = ctx.rng("base")
     shades = rng.choice([r[2], r[3], r[2]], size=p.planks)
     joints = rng.integers(0, T, size=p.planks)
+    if ctx.palette.style.simple:
+        # 8-bit planks: flat boards half a tile wide, split by dark seams and staggered end joints.
+        # Narrower boards turn into stripes once every seam is the darkest shade.
+        pw = max(pw, T // 2)
+        plank = xs // pw
+        tile = np.full((T, T), r[2], dtype=np.uint8)
+        tile[(xs % pw == pw - 1) | (ys == joints[plank])] = r[0]
+        return tile
     tile = shades[plank].astype(np.uint8)
     phase_off = rng.random(p.planks) * T
     grain = np.sin((ys + phase_off[plank]) * 2 * np.pi * 3 / T + xs * 0.9) > 1.0 - p.grain * 0.5
@@ -792,6 +800,8 @@ class WaterParams(Params):
 )
 def water(ctx: GenContext, p: WaterParams, variant: int, phase: float) -> np.ndarray:
     T, r = ctx.T, ctx.ramp(0)
+    if ctx.palette.style.simple:
+        return _simple_water(ctx, p, variant, phase)
     base = _field(ctx, variant, 2, t=phase, tcells=2)
     levels = [r[1], r[1], r[2]] if p.depth > 0.6 else [r[2], r[2], r[3]] if p.depth < 0.25 else [r[1], r[2], r[2]]
     tile = quantize(contrast(base, 1.3), levels, dither=ctx.dither(1.0))
@@ -799,6 +809,21 @@ def water(ctx: GenContext, p: WaterParams, variant: int, phase: float) -> np.nda
     band = 0.02 + p.waves * 0.04
     tile[np.abs(crest - 0.66) < band] = r[3]
     tile[np.abs(crest - 0.70) < band * 0.3] = r[4]
+    return tile
+
+
+def _simple_water(ctx: GenContext, p: WaterParams, variant: int, phase: float) -> np.ndarray:
+    """8-bit water, like Dragon Quest's sea: a flat fill with a few small wave arcs that rock side to side.
+
+    Depth comes from the base color (and darker tone patches); here it only calms the surface.
+    """
+    T, r = ctx.T, ctx.ramp(0)
+    tile = np.full((T, T), r[2], dtype=np.uint8)
+    n = max(1, round((0.4 + p.waves) * (1.0 - 0.5 * p.depth) * T * T / 80))
+    for x, y, u in _scatter(ctx, variant, n, margin=3, key="waves"):
+        dx = int(round(np.sin(2 * np.pi * (phase + u[0]))))  # loops with the animation
+        for ox, oy in ((-2, 1), (-1, 0), (0, 0), (1, 1)):  # a 4px arc, crest up
+            _px(tile, x + dx + ox, y + oy, r[4])
     return tile
 
 

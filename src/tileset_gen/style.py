@@ -55,6 +55,7 @@ class Style:
     sprite_colors: int  # default per-character palette size (not counting transparency)
     emote_colors: int  # the shared emote balloon sheet: ink, white and the icons
     dither: float = 1.0  # scales generators' ordered dithering between shades
+    simple: bool = False  # generators with an 8-bit branch draw fewer, bolder details (water, wood floors)
     hardware: tuple[RGB, ...] = ()  # allowed colors; empty = any RGB at `bits` per channel
     bits: int = 8
 
@@ -125,7 +126,7 @@ STYLES: dict[str, Style] = {
     ),
     "nes": Style(
         "nes", shades=3, layout=(0, 0, 1, 1, 2), ink=(0, 0, 0), shadows=False, max_colors=16, sprite_colors=3,
-        emote_colors=4, dither=0.0, hardware=tuple(hex_to_rgb(h) for h in NES_COLORS),
+        emote_colors=4, dither=0.0, simple=True, hardware=tuple(hex_to_rgb(h) for h in NES_COLORS),
     ),
     "gbc": Style(
         "gbc", shades=4, layout=(0, 1, 2, 2, 3), ink=(16, 16, 24), shadows=False, max_colors=32, sprite_colors=3,

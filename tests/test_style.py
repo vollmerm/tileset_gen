@@ -114,3 +114,19 @@ def test_merged_colors_show_the_color_they_kept():
     remap, lut = pal.reduce(counts, 1)
     assert len(set(remap[ramp])) == 1
     assert tuple(lut[remap[ramp[2]], :3]) == pal.colors[ramp[2]], "the heavy middle shade survives"
+
+
+@pytest.mark.parametrize("name", ["water", "wood_floor"])
+def test_nes_water_and_wood_are_flat_and_seamless(name: str):
+    g = registry.get(name)
+    ctx = GenContext(16, 4, name, Palette(style="nes"), g.default_colors())
+    p = g.params()
+    a, b = g.fn(ctx, p, 0, 0.0), g.fn(ctx, p, 1, 0.0)
+    assert len(np.unique(a)) <= 2, "one fill plus one detail shade"
+    assert np.bincount(a.ravel()).max() / a.size >= 0.75, "mostly flat"
+    edge = np.ones(a.shape, bool)
+    edge[1:-1, 1:-1] = False
+    assert np.array_equal(a[edge], b[edge]), "variants still share their border"
+    if g.animatable:
+        frames = [g.fn(ctx, p, 0, k / 4) for k in range(4)]
+        assert any(not np.array_equal(frames[0], f) for f in frames[1:]), "the waves move"
